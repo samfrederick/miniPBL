@@ -1,0 +1,29 @@
+grid:
+  nz: 100
+  Lz: 3000.0
+  dim: 1
+
+physics:
+  surface_heat_flux: 0.24       # K m/s (~300 W/m^2)
+  theta_initial: 300.0           # K
+  reference_theta: 300.0         # K
+  mixed_layer_height: 1000.0     # m
+  lapse_rate: 0.003              # K/m above mixed layer
+
+turbulence:
+  scheme: "k-profile"
+  k_profile_kappa: 0.4
+  theta_excess_threshold: 0.5   # K
+  background_K: 0.1             # m^2/s
+
+time:
+  dt: 1.0
+  t_end: 14400.0                # 4 hours
+  output_interval: 300.0        # 5 minutes
+
+output:
+  output_dir: "output"
+  fields_to_save:
+    - theta
+    - heat_flux
+    - K_h
