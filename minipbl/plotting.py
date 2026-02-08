@@ -101,9 +101,9 @@ def _plot_results_2d(filepath, output_dir):
     x_center = nc.variables["x_center"].data.copy()
     z_center = nc.variables["z_center"].data.copy()
     z_face = nc.variables["z_face"].data.copy()
-    theta = nc.variables["theta"].data.copy()     # (nt, nx, nz)
-    u = nc.variables["u"].data.copy()             # (nt, nx, nz)
-    w = nc.variables["w"].data.copy()             # (nt, nx, nz+1)
+    theta = nc.variables["theta"].data.copy()     # (nt, nz, nx)
+    u = nc.variables["u"].data.copy()             # (nt, nz, nx)
+    w = nc.variables["w"].data.copy()             # (nt, nz+1, nx)
     bl_height = nc.variables["bl_height"].data.copy()  # (nt, nx)
     nc.close()
 
@@ -120,7 +120,6 @@ def _plot_results_2d(filepath, output_dir):
         indices.append(nt - 1)
 
     # --- x-z cross-sections at selected times ---
-# --- x-z cross-sections at selected times ---
     for i in sorted(indices):
         t_hr = time[i] / 3600.0
 
@@ -181,7 +180,7 @@ def _plot_results_2d(filepath, output_dir):
     fig, ax = plt.subplots(figsize=(6, 8))
     for i in sorted(indices):
         t_hr = time[i] / 3600.0
-        theta_mean = np.mean(theta[i, :, :], axis=0)
+        theta_mean = np.mean(theta[i, :, :], axis=1)
         ax.plot(theta_mean, z_center, label=f"t = {t_hr:.1f} h")
     ax.set_xlabel("Potential Temperature (K)")
     ax.set_ylabel("Height (m)")
