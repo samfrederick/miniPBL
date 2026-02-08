@@ -93,66 +93,107 @@ class NetCDFWriter:
 
     def _close_2d(self):
         """Write 2D output with x dimension and velocity fields."""
+
         nt = len(self._times)
         nx = self.grid.nx
         nz = self.grid.nz
         nc = netcdf_file(self.filepath, "w")
 
+        # --------------------
+        # Dimensions
+        # --------------------
         nc.createDimension("time", nt)
         nc.createDimension("x_center", nx)
         nc.createDimension("z_center", nz)
         nc.createDimension("z_face", nz + 1)
 
+        # --------------------
         # Coordinate variables
+        # --------------------
         t_var = nc.createVariable("time", "f8", ("time",))
         t_var[:] = np.array(self._times)
         t_var.units = "s"
+        t_var.axis = "T"
 
         x_c = nc.createVariable("x_center", "f8", ("x_center",))
         x_c[:] = self.grid.x_center
         x_c.units = "m"
+        x_c.axis = "X"
+        x_c.standard_name = "projection_x_coordinate"
 
         z_c = nc.createVariable("z_center", "f8", ("z_center",))
         z_c[:] = self.grid.z_center
         z_c.units = "m"
+        z_c.axis = "Z"
+        z_c.standard_name = "height"
+        z_c.positive = "up"
 
         z_f = nc.createVariable("z_face", "f8", ("z_face",))
         z_f[:] = self.grid.z_face
         z_f.units = "m"
+        z_f.axis = "Z"
+        z_f.standard_name = "height"
+        z_f.positive = "up"
 
-        # Theta (time, x_center, z_center)
-        theta_var = nc.createVariable("theta", "f8",
-                                      ("time", "x_center", "z_center"))
+        # --------------------
+        # Prognostic / diagnostic variables
+        # NOTE: dimension order is now (time, z, x)
+        # --------------------
+
+        # Theta
+        theta_var = nc.createVariable(
+            "theta", "f8",
+            ("time", "z_center", "x_center")
+        )
         theta_var[:] = np.array(self._theta)
+        theta_var.coordinates = "time z_center x_center"
 
-        # u velocity (time, x_center, z_center)
-        u_var = nc.createVariable("u", "f8",
-                                  ("time", "x_center", "z_center"))
+        # u velocity
+        u_var = nc.createVariable(
+            "u", "f8",
+            ("time", "z_center", "x_center")
+        )
         u_var[:] = np.array(self._u)
+        u_var.coordinates = "time z_center x_center"
 
-        # w velocity (time, x_center, z_face)
-        w_var = nc.createVariable("w", "f8",
-                                  ("time", "x_center", "z_face"))
+        # w velocity (defined on faces)
+        w_var = nc.createVariable(
+            "w", "f8",
+            ("time", "z_face", "x_center")
+        )
         w_var[:] = np.array(self._w)
+        w_var.coordinates = "time z_face x_center"
 
-        # pressure (time, x_center, z_center)
-        p_var = nc.createVariable("p", "f8",
-                                  ("time", "x_center", "z_center"))
+        # pressure
+        p_var = nc.createVariable(
+            "p", "f8",
+            ("time", "z_center", "x_center")
+        )
         p_var[:] = np.array(self._p)
+        p_var.coordinates = "time z_center x_center"
 
-        # heat flux (time, x_center, z_face)
-        hf_var = nc.createVariable("heat_flux", "f8",
-                                   ("time", "x_center", "z_face"))
+        # heat flux (faces)
+        hf_var = nc.createVariable(
+            "heat_flux", "f8",
+            ("time", "z_face", "x_center")
+        )
         hf_var[:] = np.array(self._heat_flux)
+        hf_var.coordinates = "time z_face x_center"
 
-        # K_h (time, x_center, z_face)
-        kh_var = nc.createVariable("K_h", "f8",
-                                   ("time", "x_center", "z_face"))
+        # K_h (faces)
+        kh_var = nc.createVariable(
+            "K_h", "f8",
+            ("time", "z_face", "x_center")
+        )
         kh_var[:] = np.array(self._K_h)
+        kh_var.coordinates = "time z_face x_center"
 
-        # BL height (time, x_center)
-        bl_var = nc.createVariable("bl_height", "f8",
-                                   ("time", "x_center"))
+        # Boundary-layer height
+        bl_var = nc.createVariable(
+            "bl_height", "f8",
+            ("time", "x_center")
+        )
         bl_var[:] = np.array(self._bl_height)
+        bl_var.coordinates = "time x_center"
 
         nc.close()
