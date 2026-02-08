@@ -14,6 +14,8 @@ class GridConfig:
     dim: int = 1
     nx: int = 1
     Lx: float = 6000.0
+    ny: int = 1
+    Ly: float = 6000.0
 
 
 @dataclass
@@ -93,8 +95,10 @@ def load_config(path: str) -> SimConfig:
     assert cfg.time.dt > 0, "dt must be positive"
     assert cfg.time.t_end > cfg.time.dt, "t_end must exceed dt"
 
-    # Auto-set dim=2 when nx > 1
-    if cfg.grid.nx > 1:
+    # Auto-detect dimensionality
+    if cfg.grid.nx > 1 and cfg.grid.ny > 1:
+        cfg.grid.dim = 3
+    elif cfg.grid.nx > 1:
         cfg.grid.dim = 2
 
     return cfg

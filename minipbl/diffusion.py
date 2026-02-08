@@ -136,3 +136,111 @@ def compute_diffusion_tendency_w(w, K_m, grid, K_horiz=0.0):
         tendency[:, 1:nz] += K_horiz * _horizontal_laplacian_zface(w, grid.dx)[:, 1:nz]
 
     return tendency
+
+
+# ---------------------------------------------------------------------------
+# 3D diffusion tendencies
+# ---------------------------------------------------------------------------
+# All 3D arrays: (nx, ny, nz) for cell-center, (nx, ny, nz+1) for z-face.
+# ---------------------------------------------------------------------------
+
+def _horizontal_laplacian_center_3d(f, dx, dy):
+    """Laplacian d2f/dx2 + d2f/dy2 for a cell-center field (nx, ny, nz), periodic in x and y."""
+    return ((np.roll(f, -1, axis=0) - 2.0 * f + np.roll(f, 1, axis=0)) / (dx * dx)
+            + (np.roll(f, -1, axis=1) - 2.0 * f + np.roll(f, 1, axis=1)) / (dy * dy))
+
+
+def _horizontal_laplacian_zface_3d(f, dx, dy):
+    """Laplacian d2f/dx2 + d2f/dy2 for a z-face field (nx, ny, nz+1), periodic in x and y."""
+    return ((np.roll(f, -1, axis=0) - 2.0 * f + np.roll(f, 1, axis=0)) / (dx * dx)
+            + (np.roll(f, -1, axis=1) - 2.0 * f + np.roll(f, 1, axis=1)) / (dy * dy))
+
+
+def compute_diffusion_tendency_theta_3d(theta, K_h, grid, surface_heat_flux,
+                                        K_horiz=0.0):
+    """Vertical + horizontal diffusion of theta for 3D fields.
+
+    theta: (nx, ny, nz), K_h: (nx, ny, nz+1)
+    Returns (nx, ny, nz).
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dz = grid.dz
+
+    wtheta = np.zeros((nx, ny, nz + 1))
+    wtheta[:, :, 1:nz] = -K_h[:, :, 1:nz] * (theta[:, :, 1:nz] - theta[:, :, :nz-1]) / dz
+    wtheta[:, :, 0] = surface_heat_flux
+    wtheta[:, :, -1] = 0.0
+
+    tendency = -(wtheta[:, :, 1:] - wtheta[:, :, :-1]) / dz
+
+    if K_horiz > 0:
+        tendency += K_horiz * _horizontal_laplacian_center_3d(theta, grid.dx, grid.dy)
+
+    return tendency
+
+
+def compute_diffusion_tendency_u_3d(u, K_m, grid, K_horiz=0.0):
+    """Vertical + horizontal diffusion of u for 3D fields.
+
+    u: (nx, ny, nz), K_m: (nx, ny, nz+1)
+    Returns (nx, ny, nz).
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dz = grid.dz
+
+    tau = np.zeros((nx, ny, nz + 1))
+    tau[:, :, 1:nz] = -K_m[:, :, 1:nz] * (u[:, :, 1:nz] - u[:, :, :nz-1]) / dz
+    tau[:, :, 0] = -K_m[:, :, 0] * u[:, :, 0] / (0.5 * dz)
+    tau[:, :, -1] = 0.0
+
+    tendency = -(tau[:, :, 1:] - tau[:, :, :-1]) / dz
+
+    if K_horiz > 0:
+        tendency += K_horiz * _horizontal_laplacian_center_3d(u, grid.dx, grid.dy)
+
+    return tendency
+
+
+def compute_diffusion_tendency_v_3d(v, K_m, grid, K_horiz=0.0):
+    """Vertical + horizontal diffusion of v for 3D fields.
+
+    v: (nx, ny, nz), K_m: (nx, ny, nz+1)
+    Returns (nx, ny, nz).
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dz = grid.dz
+
+    tau = np.zeros((nx, ny, nz + 1))
+    tau[:, :, 1:nz] = -K_m[:, :, 1:nz] * (v[:, :, 1:nz] - v[:, :, :nz-1]) / dz
+    tau[:, :, 0] = -K_m[:, :, 0] * v[:, :, 0] / (0.5 * dz)
+    tau[:, :, -1] = 0.0
+
+    tendency = -(tau[:, :, 1:] - tau[:, :, :-1]) / dz
+
+    if K_horiz > 0:
+        tendency += K_horiz * _horizontal_laplacian_center_3d(v, grid.dx, grid.dy)
+
+    return tendency
+
+
+def compute_diffusion_tendency_w_3d(w, K_m, grid, K_horiz=0.0):
+    """Vertical + horizontal diffusion of w for 3D fields.
+
+    w: (nx, ny, nz+1), K_m: (nx, ny, nz+1)
+    Returns (nx, ny, nz+1).  Boundary values stay zero.
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dz = grid.dz
+
+    tendency = np.zeros((nx, ny, nz + 1))
+
+    K_m_center = 0.5 * (K_m[:, :, :-1] + K_m[:, :, 1:])
+    dwdz = (w[:, :, 1:] - w[:, :, :-1]) / dz
+    flux = -K_m_center * dwdz
+    tendency[:, :, 1:nz] = -(flux[:, :, 1:nz] - flux[:, :, :nz-1]) / dz
+
+    if K_horiz > 0:
+        tendency[:, :, 1:nz] += K_horiz * _horizontal_laplacian_zface_3d(
+            w, grid.dx, grid.dy)[:, :, 1:nz]
+
+    return tendency

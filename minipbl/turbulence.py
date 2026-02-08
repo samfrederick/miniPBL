@@ -108,3 +108,25 @@ def compute_k_profile_2d(state, grid, turb_cfg, phys_cfg):
     K_m = turb_cfg.K_m_ratio * K_h
 
     return K_h, K_m
+
+
+def compute_k_profile_3d(state, grid, turb_cfg, phys_cfg):
+    """Compute K_h and K_m column-by-column for 3D fields.
+
+    Returns (K_h, K_m) both of shape (nx, ny, nz+1).
+    Also updates state.bl_height (nx, ny).
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    K_h = np.zeros((nx, ny, nz + 1))
+    bl_height = np.zeros((nx, ny))
+
+    for i in range(nx):
+        for j in range(ny):
+            K_h[i, j, :], bl_height[i, j] = _compute_k_profile_column(
+                state.theta[i, j, :], grid, turb_cfg, phys_cfg
+            )
+
+    state.bl_height[:] = bl_height
+    K_m = turb_cfg.K_m_ratio * K_h
+
+    return K_h, K_m

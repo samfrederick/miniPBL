@@ -1,3 +1,85 @@
+# miniPBL v3.0.0
+
+Extension of miniPBL from 2D x-z to full 3D x-y-z Boussinesq solver with a prognostic v velocity, Coriolis coupling on both u and v, and 3D pressure projection. The 1D and 2D modes are fully backward-compatible.
+
+## New Features
+
+### 3D x-y-z Boussinesq Solver
+- Prognostic v velocity on Arakawa C-grid y-faces, alongside existing theta, u, and w
+- All arrays stored internally as `(nx, ny, nz)` with NetCDF output transposed to `(time, z, y, x)` for VisIT
+- Automatic 3D mode activation when both `nx > 1` and `ny > 1` in the configuration
+
+### 3D Pressure Solver
+- `PoissonSolver3D`: 2D FFT in x and y (both periodic) + tridiagonal solve in z per wavenumber pair
+- Combined eigenvalues `lambda_xy[m,n] = lambda_x[m] + lambda_y[n]` for each `(kx, ky)` mode
+- kx=0, ky=0 mode: pressure pinned to zero (null-space treatment)
+- `project_velocity_3d`: 3D divergence, pressure correction for u, v, and w
+
+### 3D Advection
+- Flux-form centered advection for theta, u, v, and w with y-flux terms
+- Periodic y boundary conditions via `np.roll` on axis=1
+
+### 3D Diffusion
+- Horizontal Laplacian in x and y for cell-center and z-face fields
+- Vertical + horizontal diffusion for theta, u, v, and w
+- No-slip surface stress for both u and v
+
+### Coriolis Forcing
+- Full Coriolis coupling: `du/dt += f*(v - v_geo)`, `dv/dt += -f*(u - u_geo)`
+- v interpolated to x-faces for u tendency; u interpolated to y-faces for v tendency
+
+### 3D Turbulence
+- Column-by-column K-profile closure over `(nx, ny)` columns
+- Boundary layer height diagnosed per column: `bl_height(nx, ny)`
+
+### 3D Boundary Conditions
+- Rigid-lid: `w[:,:,0] = 0`, `w[:,:,-1] = 0`
+- Fixed lapse rate enforcement at domain top for 3D theta fields
+
+### 3D Output and Diagnostics
+- NetCDF dimensions: `(time, z_center, y_center, x_center)` and `(time, z_face, y_center, x_center)`
+- Variables: theta, u, v, w, p, heat_flux, K_h, bl_height
+- Diagnostic plots:
+  - x-z cross-sections at mid-y (theta, u, v, w)
+  - x-y horizontal cross-sections at mid-z and near-surface (theta, w)
+  - xy-averaged theta profiles
+  - xy-averaged BL height time series
+
+### Configuration
+- New grid parameters: `ny`, `Ly`
+- New config file: `config/cbl_3d.yaml` (64x64x64, dt=0.5s, 1 hour simulation)
+
+## Backward Compatibility
+
+- `ny=1` (or omitting `ny`): dimensionality stays 1D or 2D; all existing code paths unchanged
+- `nx > 1, ny > 1`: activates 3D code paths
+- `geostrophic_v` remains as a large-scale forcing parameter (used for Coriolis balance in 2D and 3D)
+
+## Files Added
+- `config/cbl_3d.yaml` — 3D configuration file
+
+## Files Modified
+- `minipbl/config.py` — Added `ny`, `Ly` to `GridConfig`; 3D auto-detection
+- `minipbl/grid.py` — Added y-direction arrays (`ny`, `Ly`, `dy`, `y_face`, `y_center`)
+- `minipbl/state.py` — 3D field arrays `(nx, ny, nz)`, prognostic v, `initialize_v()`
+- `minipbl/advection.py` — 3D flux-form advection for theta, u, v, w
+- `minipbl/diffusion.py` — 3D horizontal Laplacian; diffusion tendencies for theta, u, v, w
+- `minipbl/pressure.py` — `PoissonSolver3D` and `project_velocity_3d`
+- `minipbl/boundary.py` — 3D rigid-lid and top-gradient boundary conditions
+- `minipbl/turbulence.py` — `compute_k_profile_3d` (double loop over nx, ny columns)
+- `minipbl/timestepper.py` — `rk3_step_3d` with v projection
+- `minipbl/solver.py` — `compute_tendencies_3d` (Coriolis on u and v, buoyancy), 3D constructor/step/run
+- `minipbl/output.py` — `_close_3d` with `(time, z, y, x)` ordering, v variable
+- `minipbl/plotting.py` — `_plot_results_3d` with x-z, x-y, and profile diagnostics
+
+## Dependencies
+- numpy
+- scipy
+- matplotlib
+- pyyaml
+
+---
+
 # miniPBL v2.0.0
 
 Extension of miniPBL from a 1D vertical column solver to a 2D x-z Boussinesq solver with resolved convection, momentum equations, and pressure projection. The 1D mode is fully backward-compatible with v1.0.0.

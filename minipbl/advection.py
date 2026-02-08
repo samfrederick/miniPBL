@@ -123,30 +123,151 @@ def compute_advection_tendency_w(u, w, grid):
     tendency = np.zeros((nx, nz + 1))
 
     # --- x-flux of w-momentum at (x-face, z-face) ---
-    # u at z-face k: average u from levels k-1 and k
     u_at_zface = np.zeros((nx, nz + 1))
     u_at_zface[:, 1:nz] = 0.5 * (u[:, :nz-1] + u[:, 1:nz])
-    # w at x-face: average from cell i-1 and cell i (same as for u-momentum)
-    # But here we need w at (x-face[i], z-face[k])
-    # w at x_face[i] = average of w[i-1] and w[i]
-    # Actually, u_at_zface is at (x-face[i], z-face[k])
-    # and we need w there too — w at x-face = 0.5*(w[i-1] + w[i])
-    # flux = u_at_zface * w_at_xface at (x-face[i], z-face[k])
     w_at_xface = 0.5 * (w + np.roll(w, 1, axis=0))
-    flux_x = u_at_zface * w_at_xface  # at (x-face, z-face)
+    flux_x = u_at_zface * w_at_xface
 
-    # Divergence at (x-center[i], z-face[k]):
-    # (flux at x-face[i+1]) - (flux at x-face[i]) / dx
     dflux_x = (np.roll(flux_x, -1, axis=0) - flux_x) / dx
 
     # --- z-flux of w-momentum at cell centers (z-center) ---
     w_at_zcenter = 0.5 * (w[:, :-1] + w[:, 1:])  # (nx, nz)
-    flux_z_center = w_at_zcenter * w_at_zcenter  # at cell centers
+    flux_z_center = w_at_zcenter * w_at_zcenter
 
-    # Divergence at z-face k (between cell k-1 and cell k):
-    # (flux at cell center k) - (flux at cell center k-1) / dz
-    # For interior z-faces k=1..nz-1:
     tendency[:, 1:nz] = -(dflux_x[:, 1:nz]
                            + (flux_z_center[:, 1:nz] - flux_z_center[:, :nz-1]) / dz)
+
+    return tendency
+
+
+# ---------------------------------------------------------------------------
+# 3D flux-form centered advection on Arakawa C-grid
+# ---------------------------------------------------------------------------
+# Convention:
+#   - Cell-center quantities: theta(nx, ny, nz) at (x_center[i], y_center[j], z_center[k])
+#   - u(nx, ny, nz) at left x-face of cell i
+#   - v(nx, ny, nz) at front y-face of cell j
+#   - w(nx, ny, nz+1) at bottom z-face of cell k
+# ---------------------------------------------------------------------------
+
+
+def compute_advection_tendency_theta_3d(theta, u, v, w, grid):
+    """Flux-form advection tendency for theta in 3D.
+
+    Returns (nx, ny, nz).
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dx, dy, dz = grid.dx, grid.dy, grid.dz
+
+    # --- x-flux ---
+    theta_at_xface = 0.5 * (theta + np.roll(theta, 1, axis=0))
+    flux_x = u * theta_at_xface
+    dflux_x = (np.roll(flux_x, -1, axis=0) - flux_x) / dx
+
+    # --- y-flux ---
+    theta_at_yface = 0.5 * (theta + np.roll(theta, 1, axis=1))
+    flux_y = v * theta_at_yface
+    dflux_y = (np.roll(flux_y, -1, axis=1) - flux_y) / dy
+
+    # --- z-flux ---
+    flux_z = np.zeros((nx, ny, nz + 1))
+    flux_z[:, :, 1:nz] = w[:, :, 1:nz] * 0.5 * (theta[:, :, :nz-1] + theta[:, :, 1:nz])
+
+    dflux_z = (flux_z[:, :, 1:] - flux_z[:, :, :-1]) / dz
+
+    return -(dflux_x + dflux_y + dflux_z)
+
+
+def compute_advection_tendency_u_3d(u, v, w, grid):
+    """Flux-form advection tendency for u in 3D.
+
+    Returns (nx, ny, nz).
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dx, dy, dz = grid.dx, grid.dy, grid.dz
+
+    # --- x-flux: uu at cell centers ---
+    u_right = np.roll(u, -1, axis=0)
+    u_center = 0.5 * (u + u_right)
+    flux_x_center = u_center * u_center
+    dflux_x = (flux_x_center - np.roll(flux_x_center, 1, axis=0)) / dx
+
+    # --- y-flux: v at (x-face, y-face) * u at y-face ---
+    # v at x-face: average of v[i-1,j] and v[i,j]
+    v_at_xface = 0.5 * (v + np.roll(v, 1, axis=0))
+    # u at y-face: average of u[i,j-1] and u[i,j]
+    u_at_yface = 0.5 * (u + np.roll(u, 1, axis=1))
+    flux_y = v_at_xface * u_at_yface  # at (x-face, y-face)
+    dflux_y = (np.roll(flux_y, -1, axis=1) - flux_y) / dy
+
+    # --- z-flux: w at (x-face, z-face) * u at z-face ---
+    w_at_xface = 0.5 * (w + np.roll(w, 1, axis=0))
+    flux_z = np.zeros((nx, ny, nz + 1))
+    flux_z[:, :, 1:nz] = w_at_xface[:, :, 1:nz] * 0.5 * (u[:, :, :nz-1] + u[:, :, 1:nz])
+    dflux_z = (flux_z[:, :, 1:] - flux_z[:, :, :-1]) / dz
+
+    return -(dflux_x + dflux_y + dflux_z)
+
+
+def compute_advection_tendency_v_3d(u, v, w, grid):
+    """Flux-form advection tendency for v in 3D.
+
+    Returns (nx, ny, nz).
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dx, dy, dz = grid.dx, grid.dy, grid.dz
+
+    # --- x-flux: u at (x-face, y-face) * v at x-face ---
+    u_at_yface = 0.5 * (u + np.roll(u, 1, axis=1))
+    v_at_xface = 0.5 * (v + np.roll(v, 1, axis=0))
+    flux_x = u_at_yface * v_at_xface  # at (x-face, y-face)
+    dflux_x = (np.roll(flux_x, -1, axis=0) - flux_x) / dx
+
+    # --- y-flux: vv at cell centers ---
+    v_front = np.roll(v, -1, axis=1)
+    v_center = 0.5 * (v + v_front)
+    flux_y_center = v_center * v_center
+    dflux_y = (flux_y_center - np.roll(flux_y_center, 1, axis=1)) / dy
+
+    # --- z-flux: w at (y-face, z-face) * v at z-face ---
+    w_at_yface = 0.5 * (w + np.roll(w, 1, axis=1))
+    flux_z = np.zeros((nx, ny, nz + 1))
+    flux_z[:, :, 1:nz] = w_at_yface[:, :, 1:nz] * 0.5 * (v[:, :, :nz-1] + v[:, :, 1:nz])
+    dflux_z = (flux_z[:, :, 1:] - flux_z[:, :, :-1]) / dz
+
+    return -(dflux_x + dflux_y + dflux_z)
+
+
+def compute_advection_tendency_w_3d(u, v, w, grid):
+    """Flux-form advection tendency for w in 3D.
+
+    Returns (nx, ny, nz+1).  Boundary values (k=0, k=nz) stay zero.
+    """
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dx, dy, dz = grid.dx, grid.dy, grid.dz
+
+    tendency = np.zeros((nx, ny, nz + 1))
+
+    # --- x-flux ---
+    u_at_zface = np.zeros((nx, ny, nz + 1))
+    u_at_zface[:, :, 1:nz] = 0.5 * (u[:, :, :nz-1] + u[:, :, 1:nz])
+    w_at_xface = 0.5 * (w + np.roll(w, 1, axis=0))
+    flux_x = u_at_zface * w_at_xface
+    dflux_x = (np.roll(flux_x, -1, axis=0) - flux_x) / dx
+
+    # --- y-flux ---
+    v_at_zface = np.zeros((nx, ny, nz + 1))
+    v_at_zface[:, :, 1:nz] = 0.5 * (v[:, :, :nz-1] + v[:, :, 1:nz])
+    w_at_yface = 0.5 * (w + np.roll(w, 1, axis=1))
+    flux_y = v_at_zface * w_at_yface
+    dflux_y = (np.roll(flux_y, -1, axis=1) - flux_y) / dy
+
+    # --- z-flux ---
+    w_at_zcenter = 0.5 * (w[:, :, :-1] + w[:, :, 1:])
+    flux_z_center = w_at_zcenter * w_at_zcenter
+
+    tendency[:, :, 1:nz] = -(dflux_x[:, :, 1:nz]
+                              + dflux_y[:, :, 1:nz]
+                              + (flux_z_center[:, :, 1:nz] - flux_z_center[:, :, :nz-1]) / dz)
 
     return tendency

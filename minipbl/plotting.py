@@ -10,14 +10,17 @@ from scipy.io import netcdf_file
 def plot_results(filepath: str, output_dir: str = "output"):
     """Generate standard diagnostic plots from NetCDF output.
 
-    Dispatches to 1D or 2D plotting based on presence of x_center dimension.
+    Dispatches to 1D, 2D, or 3D plotting based on dimension presence.
     """
     nc = netcdf_file(filepath, "r", mmap=False)
-    if "x_center" in nc.dimensions:
-        nc.close()
+    has_y = "y_center" in nc.dimensions
+    has_x = "x_center" in nc.dimensions
+    nc.close()
+    if has_y:
+        _plot_results_3d(filepath, output_dir)
+    elif has_x:
         _plot_results_2d(filepath, output_dir)
     else:
-        nc.close()
         _plot_results_1d(filepath, output_dir)
 
 
@@ -198,6 +201,174 @@ def _plot_results_2d(filepath, output_dir):
     ax.set_xlabel("Time (hours)")
     ax.set_ylabel("BL Height (m)")
     ax.set_title("x-Averaged Boundary Layer Height")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(f"{output_dir}/bl_height.png", dpi=150)
+    print(f"  Saved {output_dir}/bl_height.png")
+
+    plt.close("all")
+
+
+# ---------------------------------------------------------------------------
+# 3D plotting
+# ---------------------------------------------------------------------------
+
+def _plot_results_3d(filepath, output_dir):
+    nc = netcdf_file(filepath, "r", mmap=False)
+
+    time = nc.variables["time"].data.copy()
+    x_center = nc.variables["x_center"].data.copy()
+    y_center = nc.variables["y_center"].data.copy()
+    z_center = nc.variables["z_center"].data.copy()
+    z_face = nc.variables["z_face"].data.copy()
+    theta = nc.variables["theta"].data.copy()       # (nt, nz, ny, nx)
+    u = nc.variables["u"].data.copy()               # (nt, nz, ny, nx)
+    v = nc.variables["v"].data.copy()               # (nt, nz, ny, nx)
+    w = nc.variables["w"].data.copy()               # (nt, nz+1, ny, nx)
+    bl_height = nc.variables["bl_height"].data.copy()  # (nt, ny, nx)
+    nc.close()
+
+    nt = len(time)
+    nz = len(z_center)
+    ny = len(y_center)
+    nx = len(x_center)
+    x_km = x_center / 1000.0
+    y_km = y_center / 1000.0
+    mid_y = ny // 2
+    mid_z = nz // 2
+    near_sfc_z = min(2, nz - 1)
+
+    # Select time indices
+    indices = [0]
+    for target_t in [3600, 7200, 10800, 14400]:
+        idx = int(np.argmin(np.abs(time - target_t)))
+        if idx not in indices:
+            indices.append(idx)
+    if nt - 1 not in indices:
+        indices.append(nt - 1)
+
+    # --- x-z cross-sections at mid-y ---
+    for i in sorted(indices):
+        t_hr = time[i] / 3600.0
+
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+
+        # Theta
+        ax = axes[0]
+        pc = ax.pcolormesh(x_km, z_center, theta[i, :, mid_y, :],
+                           shading="auto", cmap="RdYlBu_r")
+        fig.colorbar(pc, ax=ax, label="K")
+        ax.set_title(f"Theta  t={t_hr:.1f} h")
+        ax.set_xlabel("x (km)")
+        ax.set_ylabel("z (m)")
+
+        # u
+        ax = axes[1]
+        pc = ax.pcolormesh(x_km, z_center, u[i, :, mid_y, :],
+                           shading="auto", cmap="RdBu_r")
+        fig.colorbar(pc, ax=ax, label="m/s")
+        ax.set_title(f"u  t={t_hr:.1f} h")
+        ax.set_xlabel("x (km)")
+
+        # v
+        ax = axes[2]
+        pc = ax.pcolormesh(x_km, z_center, v[i, :, mid_y, :],
+                           shading="auto", cmap="RdBu_r")
+        fig.colorbar(pc, ax=ax, label="m/s")
+        ax.set_title(f"v  t={t_hr:.1f} h")
+        ax.set_xlabel("x (km)")
+
+        # w
+        ax = axes[3]
+        w_center = 0.5 * (w[i, :-1, mid_y, :] + w[i, 1:, mid_y, :])
+        wmax = max(np.max(np.abs(w_center)), 1e-6)
+        pc = ax.pcolormesh(x_km, z_center, w_center,
+                           shading="auto", cmap="RdBu_r",
+                           vmin=-wmax, vmax=wmax)
+        fig.colorbar(pc, ax=ax, label="m/s")
+        ax.set_title(f"w  t={t_hr:.1f} h")
+        ax.set_xlabel("x (km)")
+
+        fig.tight_layout()
+        fname = f"{output_dir}/xz_midy_t{time[i]:07.0f}s.png"
+        fig.savefig(fname, dpi=150)
+        print(f"  Saved {fname}")
+
+    # --- x-y horizontal cross-sections at mid-z and near-surface ---
+    for i in sorted(indices):
+        t_hr = time[i] / 3600.0
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+        # Theta near surface
+        ax = axes[0, 0]
+        pc = ax.pcolormesh(x_km, y_km, theta[i, near_sfc_z, :, :],
+                           shading="auto", cmap="RdYlBu_r")
+        fig.colorbar(pc, ax=ax, label="K")
+        ax.set_title(f"Theta z={z_center[near_sfc_z]:.0f}m  t={t_hr:.1f}h")
+        ax.set_xlabel("x (km)")
+        ax.set_ylabel("y (km)")
+
+        # w at mid-z
+        ax = axes[0, 1]
+        w_center_xy = 0.5 * (w[i, mid_z, :, :] + w[i, mid_z + 1, :, :])
+        wmax = max(np.max(np.abs(w_center_xy)), 1e-6)
+        pc = ax.pcolormesh(x_km, y_km, w_center_xy,
+                           shading="auto", cmap="RdBu_r",
+                           vmin=-wmax, vmax=wmax)
+        fig.colorbar(pc, ax=ax, label="m/s")
+        ax.set_title(f"w z={z_center[mid_z]:.0f}m  t={t_hr:.1f}h")
+        ax.set_xlabel("x (km)")
+        ax.set_ylabel("y (km)")
+
+        # Theta at mid-z
+        ax = axes[1, 0]
+        pc = ax.pcolormesh(x_km, y_km, theta[i, mid_z, :, :],
+                           shading="auto", cmap="RdYlBu_r")
+        fig.colorbar(pc, ax=ax, label="K")
+        ax.set_title(f"Theta z={z_center[mid_z]:.0f}m  t={t_hr:.1f}h")
+        ax.set_xlabel("x (km)")
+        ax.set_ylabel("y (km)")
+
+        # w near surface
+        ax = axes[1, 1]
+        w_sfc = 0.5 * (w[i, near_sfc_z, :, :] + w[i, near_sfc_z + 1, :, :])
+        wmax_sfc = max(np.max(np.abs(w_sfc)), 1e-6)
+        pc = ax.pcolormesh(x_km, y_km, w_sfc,
+                           shading="auto", cmap="RdBu_r",
+                           vmin=-wmax_sfc, vmax=wmax_sfc)
+        fig.colorbar(pc, ax=ax, label="m/s")
+        ax.set_title(f"w z={z_center[near_sfc_z]:.0f}m  t={t_hr:.1f}h")
+        ax.set_xlabel("x (km)")
+        ax.set_ylabel("y (km)")
+
+        fig.tight_layout()
+        fname = f"{output_dir}/xy_t{time[i]:07.0f}s.png"
+        fig.savefig(fname, dpi=150)
+        print(f"  Saved {fname}")
+
+    # --- xy-averaged theta profiles ---
+    fig, ax = plt.subplots(figsize=(6, 8))
+    for i in sorted(indices):
+        t_hr = time[i] / 3600.0
+        theta_mean = np.mean(theta[i, :, :, :], axis=(1, 2))
+        ax.plot(theta_mean, z_center, label=f"t = {t_hr:.1f} h")
+    ax.set_xlabel("Potential Temperature (K)")
+    ax.set_ylabel("Height (m)")
+    ax.set_title("xy-Averaged Theta Profiles")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(f"{output_dir}/theta_profiles_xyavg.png", dpi=150)
+    print(f"  Saved {output_dir}/theta_profiles_xyavg.png")
+
+    # --- BL height vs time (xy-averaged) ---
+    fig, ax = plt.subplots(figsize=(8, 4))
+    bl_mean = np.mean(bl_height, axis=(1, 2))
+    ax.plot(time / 3600.0, bl_mean, "k-", linewidth=1.5)
+    ax.set_xlabel("Time (hours)")
+    ax.set_ylabel("BL Height (m)")
+    ax.set_title("xy-Averaged Boundary Layer Height")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(f"{output_dir}/bl_height.png", dpi=150)

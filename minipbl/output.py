@@ -26,11 +26,13 @@ class NetCDFWriter:
         self._K_h: List[np.ndarray] = []
         self._bl_height: List = []
 
-        # 2D-specific buffers
+        # 2D/3D-specific buffers
         if self.dim >= 2:
             self._u: List[np.ndarray] = []
             self._w: List[np.ndarray] = []
             self._p: List[np.ndarray] = []
+        if self.dim >= 3:
+            self._v: List[np.ndarray] = []
 
     def write(self, state: State, time: float):
         """Append a snapshot to the in-memory buffer."""
@@ -39,7 +41,13 @@ class NetCDFWriter:
         self._heat_flux.append(state.heat_flux.copy())
         self._K_h.append(state.K_h.copy())
 
-        if self.dim >= 2:
+        if self.dim >= 3:
+            self._bl_height.append(state.bl_height.copy())
+            self._u.append(state.u.copy())
+            self._v.append(state.v.copy())
+            self._w.append(state.w.copy())
+            self._p.append(state.p.copy())
+        elif self.dim >= 2:
             self._bl_height.append(state.bl_height.copy())
             self._u.append(state.u.copy())
             self._w.append(state.w.copy())
@@ -49,7 +57,9 @@ class NetCDFWriter:
 
     def close(self):
         """Write all accumulated data to a NetCDF file."""
-        if self.dim >= 2:
+        if self.dim >= 3:
+            self._close_3d()
+        elif self.dim >= 2:
             self._close_2d()
         else:
             self._close_1d()
@@ -196,5 +206,130 @@ class NetCDFWriter:
         )
         bl_var[:] = np.asarray(self._bl_height)
         bl_var.coordinates = "time x_center"
+
+        nc.close()
+
+    def _close_3d(self):
+        """Write 3D output with x, y dimensions and velocity fields."""
+
+        nt = len(self._times)
+        nx = self.grid.nx
+        ny = self.grid.ny
+        nz = self.grid.nz
+        nc = netcdf_file(self.filepath, "w")
+
+        # --------------------
+        # Dimensions
+        # --------------------
+        nc.createDimension("time", nt)
+        nc.createDimension("x_center", nx)
+        nc.createDimension("y_center", ny)
+        nc.createDimension("z_center", nz)
+        nc.createDimension("z_face", nz + 1)
+
+        # --------------------
+        # Coordinate variables
+        # --------------------
+        t_var = nc.createVariable("time", "f8", ("time",))
+        t_var[:] = np.array(self._times)
+        t_var.units = "s"
+        t_var.axis = "T"
+
+        x_c = nc.createVariable("x_center", "f8", ("x_center",))
+        x_c[:] = self.grid.x_center
+        x_c.units = "m"
+        x_c.axis = "X"
+        x_c.standard_name = "projection_x_coordinate"
+
+        y_c = nc.createVariable("y_center", "f8", ("y_center",))
+        y_c[:] = self.grid.y_center
+        y_c.units = "m"
+        y_c.axis = "Y"
+        y_c.standard_name = "projection_y_coordinate"
+
+        z_c = nc.createVariable("z_center", "f8", ("z_center",))
+        z_c[:] = self.grid.z_center
+        z_c.units = "m"
+        z_c.axis = "Z"
+        z_c.standard_name = "height"
+        z_c.positive = "up"
+
+        z_f = nc.createVariable("z_face", "f8", ("z_face",))
+        z_f[:] = self.grid.z_face
+        z_f.units = "m"
+        z_f.axis = "Z"
+        z_f.standard_name = "height"
+        z_f.positive = "up"
+
+        # --------------------
+        # Prognostic / diagnostic variables
+        # NetCDF dimension order: (time, z, y, x)
+        # Solver storage order: (time, x, y, z)
+        # Transpose: (nt, nx, ny, nz) -> (nt, nz, ny, nx) via .transpose(0, 3, 2, 1)
+        # --------------------
+
+        # Theta
+        theta_var = nc.createVariable(
+            "theta", "f8",
+            ("time", "z_center", "y_center", "x_center")
+        )
+        theta_var[:] = np.asarray(self._theta).transpose(0, 3, 2, 1)
+        theta_var.coordinates = "time z_center y_center x_center"
+
+        # u velocity
+        u_var = nc.createVariable(
+            "u", "f8",
+            ("time", "z_center", "y_center", "x_center")
+        )
+        u_var[:] = np.asarray(self._u).transpose(0, 3, 2, 1)
+        u_var.coordinates = "time z_center y_center x_center"
+
+        # v velocity
+        v_var = nc.createVariable(
+            "v", "f8",
+            ("time", "z_center", "y_center", "x_center")
+        )
+        v_var[:] = np.asarray(self._v).transpose(0, 3, 2, 1)
+        v_var.coordinates = "time z_center y_center x_center"
+
+        # w velocity (defined on faces)
+        w_var = nc.createVariable(
+            "w", "f8",
+            ("time", "z_face", "y_center", "x_center")
+        )
+        w_var[:] = np.asarray(self._w).transpose(0, 3, 2, 1)
+        w_var.coordinates = "time z_face y_center x_center"
+
+        # pressure
+        p_var = nc.createVariable(
+            "p", "f8",
+            ("time", "z_center", "y_center", "x_center")
+        )
+        p_var[:] = np.asarray(self._p).transpose(0, 3, 2, 1)
+        p_var.coordinates = "time z_center y_center x_center"
+
+        # heat flux (faces)
+        hf_var = nc.createVariable(
+            "heat_flux", "f8",
+            ("time", "z_face", "y_center", "x_center")
+        )
+        hf_var[:] = np.asarray(self._heat_flux).transpose(0, 3, 2, 1)
+        hf_var.coordinates = "time z_face y_center x_center"
+
+        # K_h (faces)
+        kh_var = nc.createVariable(
+            "K_h", "f8",
+            ("time", "z_face", "y_center", "x_center")
+        )
+        kh_var[:] = np.asarray(self._K_h).transpose(0, 3, 2, 1)
+        kh_var.coordinates = "time z_face y_center x_center"
+
+        # Boundary-layer height: (nt, nx, ny) -> (nt, ny, nx)
+        bl_var = nc.createVariable(
+            "bl_height", "f8",
+            ("time", "y_center", "x_center")
+        )
+        bl_var[:] = np.asarray(self._bl_height).transpose(0, 2, 1)
+        bl_var.coordinates = "time y_center x_center"
 
         nc.close()

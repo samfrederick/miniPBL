@@ -4,8 +4,8 @@ import numpy as np
 
 from .state import State
 from .grid import Grid
-from .boundary import apply_rigid_lid_w
-from .pressure import project_velocity
+from .boundary import apply_rigid_lid_w, apply_rigid_lid_w_3d
+from .pressure import project_velocity, project_velocity_3d
 
 # Standard 3-stage RK3 coefficients (Wicker & Skamarock 2002 variant)
 # Stage 1: q* = q^n + (dt/3) * R(q^n)
@@ -69,5 +69,41 @@ def rk3_step_2d(state, grid, dt, compute_tendencies, poisson_solver):
 
         # Enforce rigid lid again after projection (should already be satisfied)
         apply_rigid_lid_w(state.w)
+
+    return state
+
+
+def rk3_step_3d(state, grid, dt, compute_tendencies, poisson_solver):
+    """Advance 3D state by one timestep using RK3 with pressure projection.
+
+    Parameters
+    ----------
+    state : State with theta(nx,ny,nz), u(nx,ny,nz), v(nx,ny,nz), w(nx,ny,nz+1)
+    grid : Grid
+    dt : timestep
+    compute_tendencies : callable(State, Grid) -> dict
+        Returns {'theta': ..., 'u': ..., 'v': ..., 'w': ...}
+    poisson_solver : PoissonSolver3D instance
+    """
+    theta_n = state.theta.copy()
+    u_n = state.u.copy()
+    v_n = state.v.copy()
+    w_n = state.w.copy()
+
+    for alpha in RK3_ALPHA:
+        tend = compute_tendencies(state, grid)
+
+        state.theta = theta_n + alpha * dt * tend['theta']
+        u_star = u_n + alpha * dt * tend['u']
+        v_star = v_n + alpha * dt * tend['v']
+        w_star = w_n + alpha * dt * tend['w']
+
+        apply_rigid_lid_w_3d(w_star)
+
+        state.u, state.v, state.w, state.p = project_velocity_3d(
+            u_star, v_star, w_star, grid, poisson_solver, alpha * dt
+        )
+
+        apply_rigid_lid_w_3d(state.w)
 
     return state

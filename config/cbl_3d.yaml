@@ -1,0 +1,29 @@
+grid:
+  nz: 64
+  Lz: 3000.0
+  nx: 32
+  Lx: 3000.0
+  ny: 32
+  Ly: 3000.0
+physics:
+  surface_heat_flux: 0.24
+  theta_initial: 300.0
+  reference_theta: 300.0
+  mixed_layer_height: 1000.0
+  lapse_rate: 0.003
+  g: 9.81
+  coriolis_f: 1.0e-4
+  geostrophic_u: 5.0
+  geostrophic_v: 0.0
+  z0: 0.1
+turbulence:
+  scheme: "k-profile"
+  k_profile_kappa: 0.4
+  theta_excess_threshold: 0.5
+  background_K: 0.1
+  K_m_ratio: 1.0
+  K_horizontal: 10.0
+time:
+  dt: 0.5
+  t_end: 3600.0
+  output_interval: 300.0

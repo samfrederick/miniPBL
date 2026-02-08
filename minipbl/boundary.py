@@ -46,3 +46,24 @@ def apply_top_fixed_gradient_2d(theta, grid, lapse_rate):
     theta: (nx, nz)
     """
     theta[:, -1] = theta[:, -2] + lapse_rate * grid.dz
+
+
+# ---------------------------------------------------------------------------
+# 3D boundary conditions
+# ---------------------------------------------------------------------------
+
+def apply_rigid_lid_w_3d(w):
+    """Enforce w = 0 at bottom and top for 3D fields.
+
+    w: (nx, ny, nz+1)
+    """
+    w[:, :, 0] = 0.0
+    w[:, :, -1] = 0.0
+
+
+def apply_top_fixed_gradient_3d(theta, grid, lapse_rate):
+    """Enforce fixed lapse rate in topmost cell for 3D fields.
+
+    theta: (nx, ny, nz)
+    """
+    theta[:, :, -1] = theta[:, :, -2] + lapse_rate * grid.dz

@@ -6,17 +6,26 @@ import numpy as np
 from .config import SimConfig
 from .grid import Grid
 from .state import State
-from .turbulence import compute_k_profile, compute_k_profile_2d
+from .turbulence import compute_k_profile, compute_k_profile_2d, compute_k_profile_3d
 from .diffusion import (compute_diffusion_tendency,
                         compute_diffusion_tendency_theta,
                         compute_diffusion_tendency_u,
-                        compute_diffusion_tendency_w)
+                        compute_diffusion_tendency_w,
+                        compute_diffusion_tendency_theta_3d,
+                        compute_diffusion_tendency_u_3d,
+                        compute_diffusion_tendency_v_3d,
+                        compute_diffusion_tendency_w_3d)
 from .advection import (compute_advection_tendency_theta,
                         compute_advection_tendency_u,
-                        compute_advection_tendency_w)
-from .boundary import apply_rigid_lid_w, apply_top_fixed_gradient_2d
-from .pressure import PoissonSolver
-from .timestepper import rk3_step, rk3_step_2d
+                        compute_advection_tendency_w,
+                        compute_advection_tendency_theta_3d,
+                        compute_advection_tendency_u_3d,
+                        compute_advection_tendency_v_3d,
+                        compute_advection_tendency_w_3d)
+from .boundary import (apply_rigid_lid_w, apply_top_fixed_gradient_2d,
+                       apply_top_fixed_gradient_3d)
+from .pressure import PoissonSolver, PoissonSolver3D
+from .timestepper import rk3_step, rk3_step_2d, rk3_step_3d
 from .output import NetCDFWriter
 
 
@@ -26,7 +35,8 @@ class Solver:
     def __init__(self, cfg: SimConfig):
         self.cfg = cfg
         self.grid = Grid(cfg.grid.nz, cfg.grid.Lz, cfg.grid.dim,
-                         cfg.grid.nx, cfg.grid.Lx)
+                         cfg.grid.nx, cfg.grid.Lx,
+                         cfg.grid.ny, cfg.grid.Ly)
         self.state = State(self.grid)
 
         # Initialize theta profile
@@ -36,15 +46,26 @@ class Solver:
             cfg.physics.lapse_rate,
         )
 
-        # 2D-specific initialization
-        if self.grid.dim >= 2:
+        # 3D initialization
+        if self.grid.dim >= 3:
+            self.state.initialize_u(
+                cfg.physics.geostrophic_u,
+                z0=cfg.physics.z0,
+                bl_height=cfg.physics.mixed_layer_height,
+            )
+            self.state.initialize_v(cfg.physics.geostrophic_v)
+            self.poisson_solver = PoissonSolver3D(self.grid)
+            rng = np.random.default_rng(seed=42)
+            n_perturb = min(5, self.grid.nz)
+            self.state.theta[:, :, :n_perturb] += rng.standard_normal(
+                (self.grid.nx, self.grid.ny, n_perturb)) * 0.01
+        elif self.grid.dim >= 2:
             self.state.initialize_u(
                 cfg.physics.geostrophic_u,
                 z0=cfg.physics.z0,
                 bl_height=cfg.physics.mixed_layer_height,
             )
             self.poisson_solver = PoissonSolver(self.grid)
-            # Seed small random perturbation in theta near surface to trigger convection
             rng = np.random.default_rng(seed=42)
             n_perturb = min(5, self.grid.nz)
             self.state.theta[:, :n_perturb] += rng.standard_normal(
@@ -136,12 +157,83 @@ class Solver:
         return {'theta': tend_theta, 'u': tend_u, 'w': tend_w}
 
     # ------------------------------------------------------------------
+    # 3D tendencies
+    # ------------------------------------------------------------------
+
+    def compute_tendencies_3d(self, state, grid):
+        """Compute tendencies for all prognostic variables in 3D.
+
+        Returns dict {'theta': ..., 'u': ..., 'v': ..., 'w': ...}.
+        """
+        phys = self.cfg.physics
+        turb = self.cfg.turbulence
+
+        # Turbulence closure (column-by-column)
+        K_h, K_m = compute_k_profile_3d(state, grid, turb, phys)
+        state.K_h[:] = K_h
+        state.K_m[:] = K_m
+
+        K_horiz = turb.K_horizontal
+
+        # --- Theta tendency ---
+        adv_theta = compute_advection_tendency_theta_3d(
+            state.theta, state.u, state.v, state.w, grid)
+        diff_theta = compute_diffusion_tendency_theta_3d(
+            state.theta, K_h, grid, phys.surface_heat_flux, K_horiz=K_horiz)
+        tend_theta = adv_theta + diff_theta
+
+        # --- u tendency ---
+        adv_u = compute_advection_tendency_u_3d(state.u, state.v, state.w, grid)
+        diff_u = compute_diffusion_tendency_u_3d(state.u, K_m, grid, K_horiz=K_horiz)
+        # Coriolis: du/dt += f * (v_bar - v_geo)
+        # v at x-faces: average v[i-1,j] and v[i,j]
+        v_at_xface = 0.5 * (state.v + np.roll(state.v, 1, axis=0))
+        coriolis_u = phys.coriolis_f * (v_at_xface - phys.geostrophic_v)
+        tend_u = adv_u + diff_u + coriolis_u
+
+        # --- v tendency ---
+        adv_v = compute_advection_tendency_v_3d(state.u, state.v, state.w, grid)
+        diff_v = compute_diffusion_tendency_v_3d(state.v, K_m, grid, K_horiz=K_horiz)
+        # Coriolis: dv/dt += -f * (u_bar - u_geo)
+        # u at y-faces: average u[i,j-1] and u[i,j]
+        u_at_yface = 0.5 * (state.u + np.roll(state.u, 1, axis=1))
+        coriolis_v = -phys.coriolis_f * (u_at_yface - phys.geostrophic_u)
+        tend_v = adv_v + diff_v + coriolis_v
+
+        # --- w tendency ---
+        adv_w = compute_advection_tendency_w_3d(state.u, state.v, state.w, grid)
+        diff_w = compute_diffusion_tendency_w_3d(state.w, K_m, grid, K_horiz=K_horiz)
+        # Buoyancy
+        theta_mean = np.mean(state.theta, axis=(0, 1), keepdims=True)  # (1, 1, nz)
+        buoyancy = np.zeros_like(state.w)
+        theta_prime = state.theta - theta_mean
+        buoyancy[:, :, 1:grid.nz] = phys.g / phys.reference_theta * 0.5 * (
+            theta_prime[:, :, :grid.nz-1] + theta_prime[:, :, 1:grid.nz])
+        tend_w = adv_w + diff_w + buoyancy
+
+        # Store heat flux diagnostic
+        dz = grid.dz
+        state.heat_flux[:, :, 1:grid.nz] = -K_h[:, :, 1:grid.nz] * (
+            state.theta[:, :, 1:grid.nz] - state.theta[:, :, :grid.nz-1]) / dz
+        state.heat_flux[:, :, 0] = phys.surface_heat_flux
+        state.heat_flux[:, :, -1] = 0.0
+
+        return {'theta': tend_theta, 'u': tend_u, 'v': tend_v, 'w': tend_w}
+
+    # ------------------------------------------------------------------
     # Stepping
     # ------------------------------------------------------------------
 
     def step(self):
         """Advance one timestep."""
-        if self.grid.dim >= 2:
+        if self.grid.dim >= 3:
+            self.state = rk3_step_3d(
+                self.state, self.grid, self.cfg.time.dt,
+                self.compute_tendencies_3d, self.poisson_solver
+            )
+            apply_top_fixed_gradient_3d(
+                self.state.theta, self.grid, self.cfg.physics.lapse_rate)
+        elif self.grid.dim >= 2:
             self.state = rk3_step_2d(
                 self.state, self.grid, self.cfg.time.dt,
                 self.compute_tendencies_2d, self.poisson_solver
@@ -183,7 +275,9 @@ class Solver:
             lf.write(f"# miniPBL progress: {n_steps} steps, dt={dt}, dim={self.grid.dim}\n")
 
         # Write initial state
-        if self.grid.dim >= 2:
+        if self.grid.dim >= 3:
+            self.compute_tendencies_3d(self.state, self.grid)
+        elif self.grid.dim >= 2:
             self.compute_tendencies_2d(self.state, self.grid)
         else:
             self.compute_tendency(self.state, self.grid)
@@ -206,7 +300,15 @@ class Solver:
                 writer.write(self.state, self.time)
                 next_output_time += output_interval
 
-                if self.grid.dim >= 2:
+                if self.grid.dim >= 3:
+                    bl_h = np.mean(self.state.bl_height)
+                    theta_sfc = np.mean(self.state.theta[:, :, 0])
+                    max_w = np.max(np.abs(self.state.w))
+                    print(f"  t={self.time:8.1f} s  "
+                          f"BL height={bl_h:7.1f} m  "
+                          f"theta_sfc={theta_sfc:.2f} K  "
+                          f"max|w|={max_w:.3f} m/s")
+                elif self.grid.dim >= 2:
                     bl_h = np.mean(self.state.bl_height)
                     theta_sfc = np.mean(self.state.theta[:, 0])
                     max_w = np.max(np.abs(self.state.w))
