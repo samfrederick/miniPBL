@@ -12,6 +12,8 @@ class GridConfig:
     nz: int = 100
     Lz: float = 3000.0
     dim: int = 1
+    nx: int = 1
+    Lx: float = 6000.0
 
 
 @dataclass
@@ -22,6 +24,11 @@ class PhysicsConfig:
     reference_theta: float = 300.0
     mixed_layer_height: float = 1000.0
     lapse_rate: float = 0.003  # K/m above mixed layer
+    g: float = 9.81
+    coriolis_f: float = 1e-4
+    geostrophic_u: float = 10.0
+    geostrophic_v: float = 0.0
+    z0: float = 0.1  # m, surface roughness length
 
 
 @dataclass
@@ -30,6 +37,8 @@ class TurbulenceConfig:
     k_profile_kappa: float = 0.4
     theta_excess_threshold: float = 0.5  # K
     background_K: float = 0.1  # m^2/s
+    K_m_ratio: float = 1.0
+    K_horizontal: float = 10.0  # m^2/s, horizontal diffusivity for 2D
 
 
 @dataclass
@@ -83,5 +92,9 @@ def load_config(path: str) -> SimConfig:
     assert cfg.grid.dim in (1, 2, 3), "dim must be 1, 2, or 3"
     assert cfg.time.dt > 0, "dt must be positive"
     assert cfg.time.t_end > cfg.time.dt, "t_end must exceed dt"
+
+    # Auto-set dim=2 when nx > 1
+    if cfg.grid.nx > 1:
+        cfg.grid.dim = 2
 
     return cfg
