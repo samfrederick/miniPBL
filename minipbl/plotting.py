@@ -120,6 +120,7 @@ def _plot_results_2d(filepath, output_dir):
         indices.append(nt - 1)
 
     # --- x-z cross-sections at selected times ---
+# --- x-z cross-sections at selected times ---
     for i in sorted(indices):
         t_hr = time[i] / 3600.0
 
@@ -127,8 +128,13 @@ def _plot_results_2d(filepath, output_dir):
 
         # Theta
         ax = axes[0]
-        pc = ax.pcolormesh(x_km, z_center, theta[i, :, :].T,
-                           shading="auto", cmap="RdYlBu_r")
+        pc = ax.pcolormesh(
+            x_km,
+            z_center,
+            theta[i, :, :],     
+            shading="auto",
+            cmap="RdYlBu_r"
+        )
         fig.colorbar(pc, ax=ax, label="K")
         ax.set_title(f"Theta  t={t_hr:.1f} h")
         ax.set_xlabel("x (km)")
@@ -136,8 +142,13 @@ def _plot_results_2d(filepath, output_dir):
 
         # u
         ax = axes[1]
-        pc = ax.pcolormesh(x_km, z_center, u[i, :, :].T,
-                           shading="auto", cmap="RdBu_r")
+        pc = ax.pcolormesh(
+            x_km,
+            z_center,
+            u[i, :, :],         
+            shading="auto",
+            cmap="RdBu_r"
+        )
         fig.colorbar(pc, ax=ax, label="m/s")
         ax.set_title(f"u  t={t_hr:.1f} h")
         ax.set_xlabel("x (km)")
@@ -145,11 +156,18 @@ def _plot_results_2d(filepath, output_dir):
         # w
         ax = axes[2]
         # Interpolate w to cell centers for plotting
-        w_center = 0.5 * (w[i, :, :-1] + w[i, :, 1:])
+        w_center = 0.5 * (w[i, :-1, :] + w[i, 1:, :])
         wmax = max(np.max(np.abs(w_center)), 1e-6)
-        pc = ax.pcolormesh(x_km, z_center, w_center.T,
-                           shading="auto", cmap="RdBu_r",
-                           vmin=-wmax, vmax=wmax)
+
+        pc = ax.pcolormesh(
+            x_km,
+            z_center,
+            w_center,           
+            shading="auto",
+            cmap="RdBu_r",
+            vmin=-wmax,
+            vmax=wmax
+        )
         fig.colorbar(pc, ax=ax, label="m/s")
         ax.set_title(f"w  t={t_hr:.1f} h")
         ax.set_xlabel("x (km)")
