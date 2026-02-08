@@ -137,7 +137,8 @@ class NetCDFWriter:
 
         # --------------------
         # Prognostic / diagnostic variables
-        # NOTE: dimension order is now (time, z, x)
+        # NetCDF dimension order: (time, z, x)
+        # Solver storage order: (time, x, z)
         # --------------------
 
         # Theta
@@ -145,7 +146,7 @@ class NetCDFWriter:
             "theta", "f8",
             ("time", "z_center", "x_center")
         )
-        theta_var[:] = np.array(self._theta)
+        theta_var[:] = np.asarray(self._theta).transpose(0, 2, 1)
         theta_var.coordinates = "time z_center x_center"
 
         # u velocity
@@ -153,7 +154,7 @@ class NetCDFWriter:
             "u", "f8",
             ("time", "z_center", "x_center")
         )
-        u_var[:] = np.array(self._u)
+        u_var[:] = np.asarray(self._u).transpose(0, 2, 1)
         u_var.coordinates = "time z_center x_center"
 
         # w velocity (defined on faces)
@@ -161,7 +162,7 @@ class NetCDFWriter:
             "w", "f8",
             ("time", "z_face", "x_center")
         )
-        w_var[:] = np.array(self._w)
+        w_var[:] = np.asarray(self._w).transpose(0, 2, 1)
         w_var.coordinates = "time z_face x_center"
 
         # pressure
@@ -169,7 +170,7 @@ class NetCDFWriter:
             "p", "f8",
             ("time", "z_center", "x_center")
         )
-        p_var[:] = np.array(self._p)
+        p_var[:] = np.asarray(self._p).transpose(0, 2, 1)
         p_var.coordinates = "time z_center x_center"
 
         # heat flux (faces)
@@ -177,7 +178,7 @@ class NetCDFWriter:
             "heat_flux", "f8",
             ("time", "z_face", "x_center")
         )
-        hf_var[:] = np.array(self._heat_flux)
+        hf_var[:] = np.asarray(self._heat_flux).transpose(0, 2, 1)
         hf_var.coordinates = "time z_face x_center"
 
         # K_h (faces)
@@ -185,7 +186,7 @@ class NetCDFWriter:
             "K_h", "f8",
             ("time", "z_face", "x_center")
         )
-        kh_var[:] = np.array(self._K_h)
+        kh_var[:] = np.asarray(self._K_h).transpose(0, 2, 1)
         kh_var.coordinates = "time z_face x_center"
 
         # Boundary-layer height
@@ -193,7 +194,7 @@ class NetCDFWriter:
             "bl_height", "f8",
             ("time", "x_center")
         )
-        bl_var[:] = np.array(self._bl_height)
+        bl_var[:] = np.asarray(self._bl_height)
         bl_var.coordinates = "time x_center"
 
         nc.close()
