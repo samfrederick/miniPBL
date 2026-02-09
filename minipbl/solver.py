@@ -1,6 +1,7 @@
 """Main solver: orchestrates one timestep and the simulation loop."""
 
 import os
+import time as _clock
 import numpy as np
 
 from .config import SimConfig
@@ -406,10 +407,22 @@ class Solver:
         # Progress log file for monitoring long simulations
         log_path = os.path.join(self.cfg.output.output_dir, "progress.log")
         log_interval = max(1, n_steps // 200)
+        wall_start = _clock.time()
 
         def _log_progress(n, msg):
+            elapsed = _clock.time() - wall_start
+            if n > 0:
+                eta_s = elapsed * (n_steps - n) / n
+                eta_m, eta_sec = divmod(int(eta_s), 60)
+                eta_h, eta_m = divmod(eta_m, 60)
+                eta_str = f"  ETA {eta_h}h{eta_m:02d}m{eta_sec:02d}s"
+            else:
+                eta_str = ""
+            el_m, el_sec = divmod(int(elapsed), 60)
+            el_h, el_m = divmod(el_m, 60)
             with open(log_path, "a") as lf:
-                lf.write(f"step {n}/{n_steps}  {msg}\n")
+                lf.write(f"step {n}/{n_steps}  {msg}  "
+                         f"[wall {el_h}h{el_m:02d}m{el_sec:02d}s{eta_str}]\n")
 
         with open(log_path, "w") as lf:
             lf.write(f"# miniPBL progress: {n_steps} steps, dt={dt}, dim={self.grid.dim}\n")

@@ -20,18 +20,18 @@ physics:
   geostrophic_v: 0.0
   z0: 0.1                          # m, surface roughness length
   surface_flux_scheme: "prescribed" # "prescribed" = fixed surface_heat_flux; "most" = Monin-Obukhov similarity
-  theta_surface: 302.0             # K, surface temperature (used only when surface_flux_scheme = "most")
-  subsidence_divergence: 0.0       # 1/s, large-scale divergence rate (0 = off); w_s(z) = -D*z
+  theta_surface: 307.0             # K, surface temperature (used only when surface_flux_scheme = "most")
+  subsidence_divergence: 5.0e-6    # 1/s, large-scale divergence rate (0 = off); w_s(z) = -D*z
   sponge_fraction: 0.25            # fraction of domain height for Rayleigh damping layer
-  sponge_alpha_max: 0.0            # 1/s, max damping rate (0 = sponge off)
+  sponge_alpha_max: 0.01           # 1/s, max damping rate (0 = sponge off)
 
 turbulence:
-  scheme: "k-profile"              # "k-profile" = diagnostic K-profile closure; "deardorff-tke" = prognostic TKE
+  scheme: "deardorff-tke"         # "k-profile" = diagnostic K-profile closure; "deardorff-tke" = prognostic TKE
   k_profile_kappa: 0.4
   theta_excess_threshold: 0.5     # K
   background_K: 0.1               # m^2/s
   K_m_ratio: 1.0
-  K_horizontal: 10.0              # m^2/s, horizontal diffusivity (unused when advection_scheme = "upwind5")
+  K_horizontal: 0.0              # m^2/s, horizontal diffusivity (unused when advection_scheme = "upwind5")
   advection_scheme: "upwind5"    # "centered" = 2nd-order + K_horizontal; "upwind5" = 5th-order Wicker-Skamarock
   # Deardorff TKE parameters (used only when scheme = "deardorff-tke")
   tke_c_m: 0.1                    # eddy viscosity coefficient
@@ -53,3 +53,4 @@ output:
     - w
     - heat_flux
     - K_h
+    - tke

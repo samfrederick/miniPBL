@@ -26,6 +26,8 @@ class NetCDFWriter:
         self._K_h: List[np.ndarray] = []
         self._bl_height: List = []
 
+        self._tke: List[np.ndarray] = []
+
         # 2D/3D-specific buffers
         if self.dim >= 2:
             self._u: List[np.ndarray] = []
@@ -40,6 +42,8 @@ class NetCDFWriter:
         self._theta.append(state.theta.copy())
         self._heat_flux.append(state.heat_flux.copy())
         self._K_h.append(state.K_h.copy())
+        if hasattr(state, 'tke') and state.tke is not None:
+            self._tke.append(state.tke.copy())
 
         if self.dim >= 3:
             self._bl_height.append(state.bl_height.copy())
@@ -199,6 +203,15 @@ class NetCDFWriter:
         kh_var[:] = np.asarray(self._K_h).transpose(0, 2, 1)
         kh_var.coordinates = "time z_face x_center"
 
+        # TKE (centers)
+        if self._tke:
+            tke_var = nc.createVariable(
+                "tke", "f8",
+                ("time", "z_center", "x_center")
+            )
+            tke_var[:] = np.asarray(self._tke).transpose(0, 2, 1)
+            tke_var.coordinates = "time z_center x_center"
+
         # Boundary-layer height
         bl_var = nc.createVariable(
             "bl_height", "f8",
@@ -323,6 +336,15 @@ class NetCDFWriter:
         )
         kh_var[:] = np.asarray(self._K_h).transpose(0, 3, 2, 1)
         kh_var.coordinates = "time z_face y_center x_center"
+
+        # TKE (centers)
+        if self._tke:
+            tke_var = nc.createVariable(
+                "tke", "f8",
+                ("time", "z_center", "y_center", "x_center")
+            )
+            tke_var[:] = np.asarray(self._tke).transpose(0, 3, 2, 1)
+            tke_var.coordinates = "time z_center y_center x_center"
 
         # Boundary-layer height: (nt, nx, ny) -> (nt, ny, nx)
         bl_var = nc.createVariable(

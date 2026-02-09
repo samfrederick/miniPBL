@@ -14,7 +14,7 @@ physics:
   lapse_rate: 0.003                # K/m above mixed layer
   g: 9.81
   coriolis_f: 1.0e-4
-  geostrophic_u: 10.0
+  geostrophic_u: 0.0
   geostrophic_v: 0.0
   z0: 0.1                          # m, surface roughness length
   surface_flux_scheme: "most"       # "prescribed" = fixed surface_heat_flux; "most" = Monin-Obukhov similarity
@@ -50,3 +50,4 @@ output:
     - w
     - heat_flux
     - K_h
+    - tke
