@@ -132,34 +132,18 @@ class State:
                        mixed_layer_height: float = 0.0,
                        g: float = 9.81,
                        reference_theta: float = 300.0):
-        """Initialize TKE with a convective scaling profile.
+        """Initialize TKE uniformly to the floor value.
 
-        In the mixed layer, TKE is set to w*^2 * (1 - z/z_i) where
-        w* = (g/theta_ref * Q_sfc * z_i)^(1/3) is the convective velocity
-        scale.  Above the mixed layer, TKE is set to the floor value.
-        If surface_heat_flux <= 0 or mixed_layer_height <= 0, falls back
-        to a uniform floor value.
+        Standard LES cold-start: begin with minimal SGS TKE and let
+        resolved turbulence develop from theta perturbations + surface
+        fluxes, which then cascades to the subgrid scales naturally.
         """
         grid = self.grid
         nx, ny, nz = grid.nx, grid.ny, grid.nz
 
-        # Compute convective velocity scale
-        if surface_heat_flux > 0 and mixed_layer_height > 0:
-            w_star = (g / reference_theta * surface_heat_flux
-                      * mixed_layer_height) ** (1.0 / 3.0)
-            tke_profile = np.array([
-                max(w_star ** 2 * max(1.0 - grid.z_center[k] / mixed_layer_height, 0.0),
-                    tke_min)
-                for k in range(nz)
-            ])
-        else:
-            tke_profile = np.full(nz, tke_min)
-
         if grid.dim >= 3:
-            self.tke = np.broadcast_to(
-                tke_profile[np.newaxis, np.newaxis, :], (nx, ny, nz)).copy()
+            self.tke = np.full((nx, ny, nz), tke_min)
         elif grid.dim >= 2:
-            self.tke = np.broadcast_to(
-                tke_profile[np.newaxis, :], (nx, nz)).copy()
+            self.tke = np.full((nx, nz), tke_min)
         else:
-            self.tke = tke_profile.copy()
+            self.tke = np.full(nz, tke_min)

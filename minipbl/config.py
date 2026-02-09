@@ -53,6 +53,7 @@ class TurbulenceConfig:
     tke_c_eps_base: float = 0.19
     tke_c_l: float = 0.76
     tke_min: float = 1e-4  # m^2/s^2, minimum TKE
+    advection_scheme: str = "centered"  # "centered" or "upwind5"
 
 
 @dataclass
@@ -106,6 +107,9 @@ def load_config(path: str) -> SimConfig:
     assert cfg.grid.dim in (1, 2, 3), "dim must be 1, 2, or 3"
     assert cfg.time.dt > 0, "dt must be positive"
     assert cfg.time.t_end > cfg.time.dt, "t_end must exceed dt"
+
+    assert cfg.turbulence.advection_scheme in ("centered", "upwind5"), \
+        f"advection_scheme must be 'centered' or 'upwind5', got '{cfg.turbulence.advection_scheme}'"
 
     # Auto-detect dimensionality
     if cfg.grid.nx > 1 and cfg.grid.ny > 1:

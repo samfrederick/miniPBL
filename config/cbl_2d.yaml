@@ -18,7 +18,7 @@ physics:
   geostrophic_v: 0.0
   z0: 0.1                          # m, surface roughness length
   surface_flux_scheme: "most"       # "prescribed" = fixed surface_heat_flux; "most" = Monin-Obukhov similarity
-  theta_surface: 302.0             # K, surface temperature (used only when surface_flux_scheme = "most")
+  theta_surface: 307.0             # K, surface temperature (used only when surface_flux_scheme = "most")
   subsidence_divergence: 5.0e-6    # 1/s, large-scale divergence rate (0 = off); w_s(z) = -D*z
   sponge_fraction: 0.25            # fraction of domain height for Rayleigh damping layer
   sponge_alpha_max: 0.01           # 1/s, max damping rate (0 = sponge off)
@@ -29,7 +29,8 @@ turbulence:
   theta_excess_threshold: 0.5     # K
   background_K: 0.1               # m^2/s
   K_m_ratio: 1.0
-  K_horizontal: 10.0              # m^2/s, horizontal diffusivity
+  K_horizontal: 0.0              # m^2/s, horizontal diffusivity (unused when advection_scheme = "upwind5")
+  advection_scheme: "upwind5"    # "centered" = 2nd-order + K_horizontal; "upwind5" = 5th-order Wicker-Skamarock
   # Deardorff TKE parameters (used only when scheme = "deardorff-tke")
   tke_c_m: 0.1                    # eddy viscosity coefficient
   tke_c_eps_base: 0.19            # base dissipation coefficient (c_eps = c_eps_base + 0.51*l/Delta)

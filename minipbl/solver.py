@@ -25,7 +25,14 @@ from .advection import (compute_advection_tendency_theta,
                         compute_advection_tendency_theta_3d,
                         compute_advection_tendency_u_3d,
                         compute_advection_tendency_v_3d,
-                        compute_advection_tendency_w_3d)
+                        compute_advection_tendency_w_3d,
+                        compute_advection_tendency_theta_upwind5,
+                        compute_advection_tendency_u_upwind5,
+                        compute_advection_tendency_w_upwind5,
+                        compute_advection_tendency_theta_3d_upwind5,
+                        compute_advection_tendency_u_3d_upwind5,
+                        compute_advection_tendency_v_3d_upwind5,
+                        compute_advection_tendency_w_3d_upwind5)
 from .boundary import (apply_rigid_lid_w, apply_top_fixed_gradient_2d,
                        apply_top_fixed_gradient_3d)
 from .pressure import PoissonSolver, PoissonSolver3D
@@ -73,7 +80,7 @@ class Solver:
             rng = np.random.default_rng(seed=42)
             n_perturb = min(5, self.grid.nz)
             self.state.theta[:, :, :n_perturb] += rng.standard_normal(
-                (self.grid.nx, self.grid.ny, n_perturb)) * 0.01
+                (self.grid.nx, self.grid.ny, n_perturb)) * 0.1
         elif self.grid.dim >= 2:
             self.state.initialize_u(
                 cfg.physics.geostrophic_u,
@@ -84,9 +91,18 @@ class Solver:
             rng = np.random.default_rng(seed=42)
             n_perturb = min(5, self.grid.nz)
             self.state.theta[:, :n_perturb] += rng.standard_normal(
-                (self.grid.nx, n_perturb)) * 0.01
+                (self.grid.nx, n_perturb)) * 0.1
         else:
             self.poisson_solver = None
+
+        # Validate grid size for upwind5 stencil (needs 6 points)
+        if cfg.turbulence.advection_scheme == "upwind5":
+            if self.grid.dim >= 2:
+                assert self.grid.nx >= 6, \
+                    f"upwind5 requires nx >= 6, got nx={self.grid.nx}"
+            if self.grid.dim >= 3:
+                assert self.grid.ny >= 6, \
+                    f"upwind5 requires ny >= 6, got ny={self.grid.ny}"
 
         self.time = 0.0
         self.step_count = 0
@@ -135,7 +151,17 @@ class Solver:
         state.K_h[:] = K_h
         state.K_m[:] = K_m
 
-        K_horiz = turb.K_horizontal
+        # --- Advection scheme dispatch ---
+        if turb.advection_scheme == "upwind5":
+            K_horiz = 0.0
+            adv_theta_fn = compute_advection_tendency_theta_upwind5
+            adv_u_fn = compute_advection_tendency_u_upwind5
+            adv_w_fn = compute_advection_tendency_w_upwind5
+        else:
+            K_horiz = turb.K_horizontal
+            adv_theta_fn = compute_advection_tendency_theta
+            adv_u_fn = compute_advection_tendency_u
+            adv_w_fn = compute_advection_tendency_w
 
         # --- Surface fluxes ---
         if phys.surface_flux_scheme == "most":
@@ -147,8 +173,7 @@ class Solver:
 
         # --- Theta tendency ---
         sfc_hf = sfc_heat_flux_arr if sfc_heat_flux_arr is not None else phys.surface_heat_flux
-        adv_theta = compute_advection_tendency_theta(
-            state.theta, state.u, state.w, grid)
+        adv_theta = adv_theta_fn(state.theta, state.u, state.w, grid)
         diff_theta = compute_diffusion_tendency_theta(
             state.theta, K_h, grid, sfc_hf, K_horiz=K_horiz)
         tend_theta = adv_theta + diff_theta
@@ -161,7 +186,7 @@ class Solver:
         tend_theta += compute_sponge_tendency(state.theta, theta_ref, grid, phys)
 
         # --- u tendency ---
-        adv_u = compute_advection_tendency_u(state.u, state.w, grid)
+        adv_u = adv_u_fn(state.u, state.w, grid)
 
         # If MOST, override surface stress in diffusion by applying tau directly
         if tau_x_arr is not None:
@@ -178,7 +203,7 @@ class Solver:
         tend_u += compute_sponge_tendency(state.u, u_ref, grid, phys)
 
         # --- w tendency ---
-        adv_w = compute_advection_tendency_w(state.u, state.w, grid)
+        adv_w = adv_w_fn(state.u, state.w, grid)
         diff_w = compute_diffusion_tendency_w(state.w, K_m, grid, K_horiz=K_horiz)
         theta_mean = np.mean(state.theta, axis=0, keepdims=True)
         buoyancy = np.zeros_like(state.w)
@@ -231,7 +256,19 @@ class Solver:
         state.K_h[:] = K_h
         state.K_m[:] = K_m
 
-        K_horiz = turb.K_horizontal
+        # --- Advection scheme dispatch ---
+        if turb.advection_scheme == "upwind5":
+            K_horiz = 0.0
+            adv_theta_fn = compute_advection_tendency_theta_3d_upwind5
+            adv_u_fn = compute_advection_tendency_u_3d_upwind5
+            adv_v_fn = compute_advection_tendency_v_3d_upwind5
+            adv_w_fn = compute_advection_tendency_w_3d_upwind5
+        else:
+            K_horiz = turb.K_horizontal
+            adv_theta_fn = compute_advection_tendency_theta_3d
+            adv_u_fn = compute_advection_tendency_u_3d
+            adv_v_fn = compute_advection_tendency_v_3d
+            adv_w_fn = compute_advection_tendency_w_3d
 
         # --- Surface fluxes ---
         if phys.surface_flux_scheme == "most":
@@ -244,8 +281,7 @@ class Solver:
 
         # --- Theta tendency ---
         sfc_hf = sfc_heat_flux_arr if sfc_heat_flux_arr is not None else phys.surface_heat_flux
-        adv_theta = compute_advection_tendency_theta_3d(
-            state.theta, state.u, state.v, state.w, grid)
+        adv_theta = adv_theta_fn(state.theta, state.u, state.v, state.w, grid)
         diff_theta = compute_diffusion_tendency_theta_3d(
             state.theta, K_h, grid, sfc_hf, K_horiz=K_horiz)
         tend_theta = adv_theta + diff_theta
@@ -258,7 +294,7 @@ class Solver:
         tend_theta += compute_sponge_tendency(state.theta, theta_ref, grid, phys)
 
         # --- u tendency ---
-        adv_u = compute_advection_tendency_u_3d(state.u, state.v, state.w, grid)
+        adv_u = adv_u_fn(state.u, state.v, state.w, grid)
 
         if tau_x_arr is not None:
             diff_u = _diffusion_u_with_most_3d(state.u, K_m, grid, tau_x_arr, K_horiz)
@@ -274,7 +310,7 @@ class Solver:
         tend_u += compute_sponge_tendency(state.u, u_ref, grid, phys)
 
         # --- v tendency ---
-        adv_v = compute_advection_tendency_v_3d(state.u, state.v, state.w, grid)
+        adv_v = adv_v_fn(state.u, state.v, state.w, grid)
 
         if tau_y_arr is not None:
             diff_v = _diffusion_v_with_most_3d(state.v, K_m, grid, tau_y_arr, K_horiz)
@@ -290,7 +326,7 @@ class Solver:
         tend_v += compute_sponge_tendency(state.v, v_ref, grid, phys)
 
         # --- w tendency ---
-        adv_w = compute_advection_tendency_w_3d(state.u, state.v, state.w, grid)
+        adv_w = adv_w_fn(state.u, state.v, state.w, grid)
         diff_w = compute_diffusion_tendency_w_3d(state.w, K_m, grid, K_horiz=K_horiz)
         theta_mean = np.mean(state.theta, axis=(0, 1), keepdims=True)
         buoyancy = np.zeros_like(state.w)

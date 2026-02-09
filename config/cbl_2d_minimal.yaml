@@ -1,0 +1,51 @@
+grid:
+  nz: 100
+  Lz: 3000.0
+  nx: 128
+  Lx: 6000.0
+  stretch_factor: 1.03
+  nz_uniform: 20
+
+physics:
+  surface_heat_flux: 0.24          # K m/s
+  theta_initial: 300.0
+  reference_theta: 300.0
+  mixed_layer_height: 1000.0
+  lapse_rate: 0.003
+  g: 9.81
+  coriolis_f: 0.0                  # no Coriolis
+  geostrophic_u: 0.0               # no mean wind
+  geostrophic_v: 0.0
+  z0: 0.1
+  surface_flux_scheme: "prescribed" # simple prescribed flux, no MOST
+  theta_surface: 302.0
+  subsidence_divergence: 0.0       # no subsidence
+  sponge_fraction: 0.25
+  sponge_alpha_max: 0.0            # sponge off
+
+turbulence:
+  scheme: "deardorff-tke"
+  k_profile_kappa: 0.4
+  theta_excess_threshold: 0.5
+  background_K: 0.1
+  K_m_ratio: 1.0
+  K_horizontal: 0.0
+  advection_scheme: "upwind5"
+  tke_c_m: 0.1
+  tke_c_eps_base: 0.19
+  tke_c_l: 0.76
+  tke_min: 1.0e-4
+
+time:
+  dt: 0.5
+  t_end: 900.0
+  output_interval: 30.0
+
+output:
+  output_dir: "output_2d_minimal"
+  fields_to_save:
+    - theta
+    - u
+    - w
+    - heat_flux
+    - K_h

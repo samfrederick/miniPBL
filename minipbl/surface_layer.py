@@ -32,8 +32,13 @@ def _psi_h_stable(zeta):
 
 
 def compute_surface_fluxes(u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
-                           max_iter=20, tol=1e-4):
+                           bl_height=1000.0, max_iter=20, tol=1e-4):
     """Compute surface fluxes using MOST for a single column.
+
+    Includes a convective velocity scale (Beljaars 1994) to prevent the
+    heat flux from collapsing in light-wind convective conditions:
+        M_eff = sqrt(u^2 + v^2 + (beta * w_star)^2)
+    where w_star = (g/theta_ref * max(Q_sfc,0) * z_i)^(1/3).
 
     Parameters
     ----------
@@ -44,6 +49,7 @@ def compute_surface_fluxes(u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
     z0 : float — surface roughness length (m)
     g : float — gravitational acceleration
     theta_ref : float — reference potential temperature
+    bl_height : float — boundary layer height for w_star (m)
     max_iter : int — maximum iterations
     tol : float — convergence tolerance for u_star
 
@@ -54,7 +60,9 @@ def compute_surface_fluxes(u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
     sfc_heat_flux : float — w'theta' at surface (K m/s)
     tau_x, tau_y : float — surface momentum flux components (m^2/s^2)
     """
-    M = max(np.sqrt(u1 ** 2 + v1 ** 2), 0.01)  # wind speed, prevent zero
+    BETA_CONV = 1.2  # Beljaars (1994) convective enhancement factor
+    M_horiz = np.sqrt(u1 ** 2 + v1 ** 2)
+    M = max(M_horiz, 0.01)
     log_z1_z0 = np.log(z1 / z0)
 
     # Initial guess: neutral
@@ -63,6 +71,14 @@ def compute_surface_fluxes(u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
 
     for _ in range(max_iter):
         u_star_old = u_star
+
+        # Convective velocity scale from current flux estimate
+        heat_flux_est = -u_star * theta_star
+        if heat_flux_est > 0 and bl_height > 0:
+            w_star = (g / theta_ref * heat_flux_est * bl_height) ** (1.0 / 3.0)
+        else:
+            w_star = 0.0
+        M_eff = max(np.sqrt(M_horiz ** 2 + (BETA_CONV * w_star) ** 2), 0.01)
 
         # Obukhov length
         if abs(theta_star) > 1e-10 and u_star > 1e-10:
@@ -91,7 +107,7 @@ def compute_surface_fluxes(u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
         denom_m = max(denom_m, 0.5)
         denom_h = max(denom_h, 0.5)
 
-        u_star = KAPPA * M / denom_m
+        u_star = KAPPA * M_eff / denom_m
         theta_star = KAPPA * (theta1 - theta_s) / denom_h
 
         if abs(u_star - u_star_old) < tol * max(u_star_old, 1e-6):
@@ -99,8 +115,8 @@ def compute_surface_fluxes(u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
 
     # Surface fluxes
     sfc_heat_flux = -u_star * theta_star
-    tau_x = -u_star ** 2 * u1 / M
-    tau_y = -u_star ** 2 * v1 / M
+    tau_x = -u_star ** 2 * u1 / max(M_horiz, 0.01)
+    tau_y = -u_star ** 2 * v1 / max(M_horiz, 0.01)
 
     return u_star, theta_star, sfc_heat_flux, tau_x, tau_y
 
@@ -116,6 +132,8 @@ def apply_most_surface_fluxes_2d(state, grid, phys_cfg):
     g = phys_cfg.g
     theta_ref = phys_cfg.reference_theta
     theta_s = phys_cfg.theta_surface
+    bl_h = float(np.mean(state.bl_height))
+    bl_height = bl_h if bl_h > 100.0 else phys_cfg.mixed_layer_height
 
     sfc_heat_flux = np.zeros(nx)
     tau_x = np.zeros(nx)
@@ -126,7 +144,8 @@ def apply_most_surface_fluxes_2d(state, grid, phys_cfg):
         theta1 = state.theta[i, 0]
 
         _, _, sfc_heat_flux[i], tau_x[i], _ = compute_surface_fluxes(
-            u1, v1, theta1, theta_s, z1, z0, g, theta_ref
+            u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
+            bl_height=bl_height
         )
 
     return sfc_heat_flux, tau_x
@@ -143,6 +162,8 @@ def apply_most_surface_fluxes_3d(state, grid, phys_cfg):
     g = phys_cfg.g
     theta_ref = phys_cfg.reference_theta
     theta_s = phys_cfg.theta_surface
+    bl_h = float(np.mean(state.bl_height))
+    bl_height = bl_h if bl_h > 100.0 else phys_cfg.mixed_layer_height
 
     sfc_heat_flux = np.zeros((nx, ny))
     tau_x = np.zeros((nx, ny))
@@ -156,7 +177,8 @@ def apply_most_surface_fluxes_3d(state, grid, phys_cfg):
 
             _, _, sfc_heat_flux[i, j], tau_x[i, j], tau_y[i, j] = \
                 compute_surface_fluxes(
-                    u1, v1, theta1, theta_s, z1, z0, g, theta_ref
+                    u1, v1, theta1, theta_s, z1, z0, g, theta_ref,
+                    bl_height=bl_height
                 )
 
     return sfc_heat_flux, tau_x, tau_y
