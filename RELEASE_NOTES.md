@@ -1,3 +1,57 @@
+# miniPBL v4.1.0
+
+5th-order upwind advection scheme, MOST convective velocity fix, and LES cold-start improvements.
+
+## New Features
+
+### 5th-Order Upwind Advection (Wicker & Skamarock 2002)
+- Upwind-biased advection for horizontal (periodic) fluxes using a 6-point stencil
+- Provides implicit numerical dissipation that selectively damps grid-scale noise while preserving resolved convective structures
+- Vertical fluxes remain 2nd-order centered (z is non-periodic and may be stretched)
+- Eliminates the need for explicit horizontal diffusion (`K_horizontal`) — automatically set to zero when `advection_scheme = "upwind5"`
+- Available for all prognostic variables (theta, u, v, w) in both 2D and 3D
+- Activated by setting `advection_scheme: "upwind5"` in the turbulence config (default: `"centered"`)
+- Requires `nx >= 6` (and `ny >= 6` for 3D) for the 6-point stencil
+
+### Beljaars (1994) Convective Velocity Scale in MOST
+- Effective wind speed includes convective velocity: `M_eff = sqrt(M² + (1.2·w*)²)`
+- Convective velocity scale: `w* = (g/theta_ref · w'theta'_sfc · h)^(1/3)`
+- Prevents MOST flux collapse in free-convective (low/zero mean wind) conditions where the wind speed floor alone gave near-zero friction velocity and heat flux
+- Boundary layer height diagnosed from the theta profile, with fallback to `mixed_layer_height`
+
+## Bug Fixes
+- **TKE cold-start**: Initialize TKE to `tke_min` uniformly instead of convective scaling profile. The previous initialization (w*²-based profile reaching ~4 m²/s² at surface) caused excessive initial SGS dissipation that killed resolved convection during spin-up. Standard LES practice (PALM, DALES, WRF-LES) is to start with minimal SGS TKE and let turbulence develop organically from theta perturbations and surface fluxes.
+- **Theta perturbation amplitude**: Increased from 0.01 K to 0.1 K, consistent with standard LES initialization practice.
+- **theta_surface**: Increased from 302 K to 307 K in `cbl_2d.yaml` for consistency with the target surface heat flux (~0.24 K m/s) under MOST.
+
+## Configuration Changes
+
+### TurbulenceConfig
+- `advection_scheme: str = "centered"` — `"centered"` (2nd-order + K_horizontal) or `"upwind5"` (5th-order upwind, no explicit diffusion)
+
+### PhysicsConfig
+- `theta_surface` default updated to 307.0 K in `cbl_2d.yaml`
+
+## Files Added
+- `config/cbl_2d_minimal.yaml` — Minimal 2D config for isolated physics testing (prescribed flux, no MOST, no subsidence, no sponge, no wind, no Coriolis)
+
+## Files Modified
+- `minipbl/advection.py` — 5th-order upwind interpolation helper and 7 new advection functions (3 for 2D, 4 for 3D)
+- `minipbl/config.py` — `advection_scheme` field and validation
+- `minipbl/solver.py` — Advection scheme dispatch, grid size validation, 0.1 K perturbation amplitude
+- `minipbl/state.py` — TKE initialization changed to uniform `tke_min`
+- `minipbl/surface_layer.py` — Beljaars convective velocity in MOST, `bl_height` parameter
+- `config/cbl_2d.yaml` — `advection_scheme: "upwind5"`, `K_horizontal: 0.0`, `theta_surface: 307.0`
+- `config/cbl_3d.yaml` — `advection_scheme: "upwind5"`
+
+## Dependencies
+- numpy
+- scipy
+- matplotlib
+- pyyaml
+
+---
+
 # miniPBL v4.0.0
 
 Addition of advanced physics parameterizations to miniPBL: vertical grid stretching, Deardorff prognostic TKE subgrid closure, Monin-Obukhov similarity theory surface layer, Rayleigh sponge damping, and large-scale subsidence. All operators updated to support variable vertical spacing. Existing 1D, 2D, and 3D modes are fully backward-compatible.
