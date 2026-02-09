@@ -8,10 +8,13 @@ A lightweight Python solver for simulating the planetary boundary layer (PBL). m
 - **1D vertical column model** simulating the convective boundary layer (CBL)
 - **2D x-z Boussinesq solver** with resolved convection, momentum equations, and pressure projection
 - **3D x-y-z Boussinesq solver** with prognostic u, v, w velocities and full pressure projection
-- Prognostic equations for potential temperature (theta), horizontal velocities (u, v), and vertical velocity (w)
-- **K-profile turbulence closure** with convective velocity scaling (w*) and automatic boundary layer height diagnosis, applied column-by-column in 2D and 3D
-- Eddy diffusivity for both heat (K_h) and momentum (K_m) with configurable ratio
-- Horizontal diffusion in x and y for numerical stability of resolved motions
+- Prognostic equations for potential temperature (theta), horizontal velocities (u, v), vertical velocity (w), and optionally turbulent kinetic energy (TKE)
+- **Two turbulence closures**:
+  - **K-profile** — diagnostic closure with convective velocity scaling (w*) and automatic boundary layer height diagnosis
+  - **Deardorff TKE** — prognostic subgrid TKE with shear/buoyancy production, dissipation, and stability-dependent mixing length; eddy viscosity K_m = c_m * l * sqrt(e) and diffusivity K_h = (1 + 2l/Delta) * K_m
+- **Monin-Obukhov Similarity Theory (MOST)** surface layer — iterative solver for u_star and theta_star with Businger-Dyer stability functions; replaces prescribed surface fluxes with interactive fluxes based on near-surface wind and temperature
+- **Rayleigh sponge damping** in the upper domain (configurable fraction and strength) to absorb gravity waves and prevent spurious reflections
+- **Large-scale subsidence** — prescribed w_s(z) = -D*z profile with configurable divergence rate to limit boundary layer growth
 - Buoyancy forcing on vertical velocity from potential temperature perturbations
 - Coriolis forcing on u and v with prescribed geostrophic wind (Ekman balance)
 - Logarithmic wind profile initialization with configurable surface roughness length
@@ -20,16 +23,17 @@ A lightweight Python solver for simulating the planetary boundary layer (PBL). m
 
 ### Numerics
 - **Arakawa C-grid** with scalars at cell centers, u at x-faces, v at y-faces, w at z-faces
+- **Vertical grid stretching** — optional geometric stretching with configurable stretch factor and uniform near-surface region; all operators support variable dz via `dz_center[k]` and `dz_face[k]` arrays
 - Second-order centered finite differences for diffusion (vertical and horizontal)
 - Flux-form centered advection for all prognostic variables
-- **Pressure Poisson solver**: FFT in x (periodic) + tridiagonal in z (2D), or 2D FFT in x-y + tridiagonal in z (3D), with Neumann BCs
+- **Pressure Poisson solver**: FFT in x (periodic) + tridiagonal in z (2D), or 2D FFT in x-y + tridiagonal in z (3D), with Neumann BCs and variable-dz tridiagonal coefficients
 - Periodic boundary conditions in x and y, rigid-lid (w=0) at top and bottom
-- No-slip surface stress parameterization for momentum (u and v)
+- Surface stress from MOST or no-slip parameterization for momentum (u and v)
 - Configurable grid resolution, domain size, timestep, and simulation duration
 
 ### Configuration
 - YAML-based configuration system (see `config/cbl_1d.yaml`, `config/cbl_2d.yaml`, and `config/cbl_3d.yaml`)
-- Configurable parameters include grid dimensions, surface heat flux, initial thermodynamic profile, turbulence scheme settings, geostrophic wind, Coriolis parameter, and output options
+- Configurable parameters include grid dimensions, vertical stretching, surface flux scheme, turbulence closure, sponge layer, subsidence, geostrophic wind, Coriolis parameter, and output options
 - Automatic dimensionality detection: `nx > 1` enables 2D; `nx > 1` and `ny > 1` enables 3D
 
 ### Output
@@ -73,10 +77,13 @@ miniPBL/
 ├── minipbl/
 │   ├── __init__.py
 │   ├── config.py            # YAML config loading and validation
-│   ├── grid.py              # Arakawa C-grid construction (1D/2D/3D)
-│   ├── state.py             # Prognostic state (theta, u, v, w, p)
+│   ├── grid.py              # Arakawa C-grid with optional vertical stretching
+│   ├── state.py             # Prognostic state (theta, u, v, w, p, tke)
 │   ├── solver.py            # Main simulation loop and tendency assembly
-│   ├── turbulence.py        # Turbulence closure (K-profile, column-by-column)
+│   ├── turbulence.py        # K-profile turbulence closure (column-by-column)
+│   ├── tke_closure.py       # Deardorff prognostic TKE closure
+│   ├── surface_layer.py     # Monin-Obukhov similarity theory surface fluxes
+│   ├── forcing.py           # Sponge/Rayleigh damping and large-scale subsidence
 │   ├── diffusion.py         # Vertical + horizontal diffusion operators
 │   ├── advection.py         # Flux-form centered advection (2D/3D)
 │   ├── pressure.py          # Poisson solver and velocity projection (2D/3D)
@@ -89,9 +96,7 @@ miniPBL/
 
 ## Roadmap
 
-- **Additional turbulence closures** — TKE-based and other schemes beyond the current K-profile parameterization
-- **Monin-Obukhov similarity theory (MOST)** — surface layer parameterization for consistent surface fluxes
 - **Moisture and tracers** — additional prognostic variables beyond potential temperature
 - **Spatially and temporally varying surface fluxes** — support heterogeneous and time-dependent lower boundary forcing
-- **Large-scale forcings** — prescribed subsidence and radiative tendencies
+- **Radiative tendencies** — prescribed or interactive radiation schemes
 - **Higher-order advection** — upwind-biased or WENO schemes for improved accuracy

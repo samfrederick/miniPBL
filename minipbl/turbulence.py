@@ -23,7 +23,7 @@ def diagnose_bl_height(theta: np.ndarray, grid: Grid,
             dtheta_below = theta[k - 1] - theta_sfc
             dtheta_above = theta[k] - theta_sfc
             frac = (theta_excess - dtheta_below) / (dtheta_above - dtheta_below)
-            return grid.z_center[k - 1] + frac * grid.dz
+            return grid.z_center[k - 1] + frac * grid.dz_face[k]
     # If no inversion found, return domain height
     return grid.Lz
 

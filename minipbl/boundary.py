@@ -1,4 +1,4 @@
-"""Boundary condition handlers for 1D and 2D."""
+"""Boundary condition handlers for 1D, 2D, and 3D."""
 
 import numpy as np
 
@@ -6,7 +6,7 @@ from .grid import Grid
 
 
 # ---------------------------------------------------------------------------
-# 1D boundary conditions (unchanged)
+# 1D boundary conditions
 # ---------------------------------------------------------------------------
 
 def apply_surface_flux(flux_array: np.ndarray, surface_heat_flux: float):
@@ -20,11 +20,8 @@ def apply_top_zero_flux(flux_array: np.ndarray):
 
 
 def apply_top_fixed_gradient(theta: np.ndarray, grid: Grid, lapse_rate: float):
-    """Enforce a fixed lapse rate in the topmost cell (Neumann-like).
-
-    This prevents the top boundary from contaminating the interior solution.
-    """
-    theta[-1] = theta[-2] + lapse_rate * grid.dz
+    """Enforce a fixed lapse rate in the topmost cell (Neumann-like)."""
+    theta[-1] = theta[-2] + lapse_rate * grid.dz_center[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +42,7 @@ def apply_top_fixed_gradient_2d(theta, grid, lapse_rate):
 
     theta: (nx, nz)
     """
-    theta[:, -1] = theta[:, -2] + lapse_rate * grid.dz
+    theta[:, -1] = theta[:, -2] + lapse_rate * grid.dz_center[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -66,4 +63,4 @@ def apply_top_fixed_gradient_3d(theta, grid, lapse_rate):
 
     theta: (nx, ny, nz)
     """
-    theta[:, :, -1] = theta[:, :, -2] + lapse_rate * grid.dz
+    theta[:, :, -1] = theta[:, :, -2] + lapse_rate * grid.dz_center[-1]

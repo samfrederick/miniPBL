@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
 /output/
+/output_2d/
+/output_3d/
 .DS_Store

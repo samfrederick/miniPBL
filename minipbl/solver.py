@@ -7,6 +7,10 @@ from .config import SimConfig
 from .grid import Grid
 from .state import State
 from .turbulence import compute_k_profile, compute_k_profile_2d, compute_k_profile_3d
+from .tke_closure import compute_tke_closure_2d, compute_tke_closure_3d
+from .surface_layer import apply_most_surface_fluxes_2d, apply_most_surface_fluxes_3d
+from .forcing import (compute_sponge_tendency, compute_sponge_tendency_w,
+                      compute_subsidence_tendency)
 from .diffusion import (compute_diffusion_tendency,
                         compute_diffusion_tendency_theta,
                         compute_diffusion_tendency_u,
@@ -36,7 +40,8 @@ class Solver:
         self.cfg = cfg
         self.grid = Grid(cfg.grid.nz, cfg.grid.Lz, cfg.grid.dim,
                          cfg.grid.nx, cfg.grid.Lx,
-                         cfg.grid.ny, cfg.grid.Ly)
+                         cfg.grid.ny, cfg.grid.Ly,
+                         cfg.grid.stretch_factor, cfg.grid.nz_uniform)
         self.state = State(self.grid)
 
         # Initialize theta profile
@@ -45,6 +50,10 @@ class Solver:
             cfg.physics.mixed_layer_height,
             cfg.physics.lapse_rate,
         )
+
+        # Initialize TKE if using deardorff-tke scheme
+        if cfg.turbulence.scheme == "deardorff-tke":
+            self.state.initialize_tke(cfg.turbulence.tke_min)
 
         # 3D initialization
         if self.grid.dim >= 3:
@@ -77,7 +86,7 @@ class Solver:
         self.step_count = 0
 
     # ------------------------------------------------------------------
-    # 1D tendency (unchanged)
+    # 1D tendency
     # ------------------------------------------------------------------
 
     def compute_tendency(self, state: State, grid: Grid) -> np.ndarray:
@@ -92,9 +101,8 @@ class Solver:
         )
 
         # Store heat flux diagnostic: w'theta' = -K_h * dtheta/dz (positive upward)
-        dz = grid.dz
         for i in range(1, grid.nz):
-            state.heat_flux[i] = -K_h[i] * (state.theta[i] - state.theta[i - 1]) / dz
+            state.heat_flux[i] = -K_h[i] * (state.theta[i] - state.theta[i - 1]) / grid.dz_face[i]
         state.heat_flux[0] = self.cfg.physics.surface_heat_flux
         state.heat_flux[-1] = 0.0
 
@@ -107,54 +115,94 @@ class Solver:
     def compute_tendencies_2d(self, state, grid):
         """Compute tendencies for all prognostic variables in 2D.
 
-        Returns dict {'theta': ..., 'u': ..., 'w': ...}.
+        Returns dict {'theta': ..., 'u': ..., 'w': ...} and optionally 'tke'.
         """
         phys = self.cfg.physics
         turb = self.cfg.turbulence
 
-        # Turbulence closure (column-by-column)
-        K_h, K_m = compute_k_profile_2d(state, grid, turb, phys)
+        # --- Turbulence closure ---
+        tke_tend = None
+        if turb.scheme == "deardorff-tke" and state.tke is not None:
+            K_h, K_m, tke_tend = compute_tke_closure_2d(state, grid, turb, phys)
+        else:
+            K_h, K_m = compute_k_profile_2d(state, grid, turb, phys)
         state.K_h[:] = K_h
         state.K_m[:] = K_m
 
         K_horiz = turb.K_horizontal
 
+        # --- Surface fluxes ---
+        if phys.surface_flux_scheme == "most":
+            sfc_heat_flux_arr, tau_x_arr = apply_most_surface_fluxes_2d(
+                state, grid, phys)
+        else:
+            sfc_heat_flux_arr = None  # use scalar prescribed value
+            tau_x_arr = None
+
         # --- Theta tendency ---
+        sfc_hf = sfc_heat_flux_arr if sfc_heat_flux_arr is not None else phys.surface_heat_flux
         adv_theta = compute_advection_tendency_theta(
             state.theta, state.u, state.w, grid)
         diff_theta = compute_diffusion_tendency_theta(
-            state.theta, K_h, grid, phys.surface_heat_flux, K_horiz=K_horiz)
+            state.theta, K_h, grid, sfc_hf, K_horiz=K_horiz)
         tend_theta = adv_theta + diff_theta
+
+        # Subsidence
+        tend_theta += compute_subsidence_tendency(state.theta, grid, phys)
+
+        # Sponge on theta: relax toward horizontal mean
+        theta_ref = np.mean(state.theta, axis=0, keepdims=True)
+        tend_theta += compute_sponge_tendency(state.theta, theta_ref, grid, phys)
 
         # --- u tendency ---
         adv_u = compute_advection_tendency_u(state.u, state.w, grid)
-        diff_u = compute_diffusion_tendency_u(state.u, K_m, grid, K_horiz=K_horiz)
-        # Coriolis: in 2D x-z with v not prognosed, the u-equation gets
-        # du/dt = ... + f*v_geo from the Coriolis+PGF balance.
+
+        # If MOST, override surface stress in diffusion by applying tau directly
+        if tau_x_arr is not None:
+            # Build custom diffusion: use MOST stress at surface
+            diff_u = _diffusion_u_with_most_2d(state.u, K_m, grid, tau_x_arr, K_horiz)
+        else:
+            diff_u = compute_diffusion_tendency_u(state.u, K_m, grid, K_horiz=K_horiz)
+
         coriolis_u = phys.coriolis_f * phys.geostrophic_v
         tend_u = adv_u + diff_u + coriolis_u
+
+        # Sponge on u: relax toward horizontal mean
+        u_ref = np.mean(state.u, axis=0, keepdims=True)
+        tend_u += compute_sponge_tendency(state.u, u_ref, grid, phys)
 
         # --- w tendency ---
         adv_w = compute_advection_tendency_w(state.u, state.w, grid)
         diff_w = compute_diffusion_tendency_w(state.w, K_m, grid, K_horiz=K_horiz)
-        # Buoyancy: dw/dt += g * (theta' / theta_ref)
-        # theta' = theta - theta_mean(z) for each level
-        theta_mean = np.mean(state.theta, axis=0, keepdims=True)  # (1, nz)
+        theta_mean = np.mean(state.theta, axis=0, keepdims=True)
         buoyancy = np.zeros_like(state.w)
-        # Buoyancy at z-faces: interpolate theta perturbation
-        theta_prime = state.theta - theta_mean  # (nx, nz)
+        theta_prime = state.theta - theta_mean
         buoyancy[:, 1:grid.nz] = phys.g / phys.reference_theta * 0.5 * (
             theta_prime[:, :grid.nz-1] + theta_prime[:, 1:grid.nz])
         tend_w = adv_w + diff_w + buoyancy
 
+        # Sponge on w: relax toward zero
+        tend_w += compute_sponge_tendency_w(state.w, grid, phys)
+
         # Store heat flux diagnostic
-        dz = grid.dz
+        dz_f = grid.dz_face
         state.heat_flux[:, 1:grid.nz] = -K_h[:, 1:grid.nz] * (
-            state.theta[:, 1:grid.nz] - state.theta[:, :grid.nz-1]) / dz
-        state.heat_flux[:, 0] = phys.surface_heat_flux
+            state.theta[:, 1:grid.nz] - state.theta[:, :grid.nz-1]) / dz_f[1:grid.nz]
+        if sfc_heat_flux_arr is not None:
+            state.heat_flux[:, 0] = sfc_heat_flux_arr
+        else:
+            state.heat_flux[:, 0] = phys.surface_heat_flux
         state.heat_flux[:, -1] = 0.0
 
-        return {'theta': tend_theta, 'u': tend_u, 'w': tend_w}
+        result = {'theta': tend_theta, 'u': tend_u, 'w': tend_w}
+
+        # TKE tendency
+        if tke_tend is not None:
+            # Sponge on TKE: relax toward zero
+            tke_tend += compute_sponge_tendency(state.tke, None, grid, phys)
+            result['tke'] = tke_tend
+
+        return result
 
     # ------------------------------------------------------------------
     # 3D tendencies
@@ -163,62 +211,109 @@ class Solver:
     def compute_tendencies_3d(self, state, grid):
         """Compute tendencies for all prognostic variables in 3D.
 
-        Returns dict {'theta': ..., 'u': ..., 'v': ..., 'w': ...}.
+        Returns dict {'theta': ..., 'u': ..., 'v': ..., 'w': ...} and optionally 'tke'.
         """
         phys = self.cfg.physics
         turb = self.cfg.turbulence
 
-        # Turbulence closure (column-by-column)
-        K_h, K_m = compute_k_profile_3d(state, grid, turb, phys)
+        # --- Turbulence closure ---
+        tke_tend = None
+        if turb.scheme == "deardorff-tke" and state.tke is not None:
+            K_h, K_m, tke_tend = compute_tke_closure_3d(state, grid, turb, phys)
+        else:
+            K_h, K_m = compute_k_profile_3d(state, grid, turb, phys)
         state.K_h[:] = K_h
         state.K_m[:] = K_m
 
         K_horiz = turb.K_horizontal
 
+        # --- Surface fluxes ---
+        if phys.surface_flux_scheme == "most":
+            sfc_heat_flux_arr, tau_x_arr, tau_y_arr = apply_most_surface_fluxes_3d(
+                state, grid, phys)
+        else:
+            sfc_heat_flux_arr = None
+            tau_x_arr = None
+            tau_y_arr = None
+
         # --- Theta tendency ---
+        sfc_hf = sfc_heat_flux_arr if sfc_heat_flux_arr is not None else phys.surface_heat_flux
         adv_theta = compute_advection_tendency_theta_3d(
             state.theta, state.u, state.v, state.w, grid)
         diff_theta = compute_diffusion_tendency_theta_3d(
-            state.theta, K_h, grid, phys.surface_heat_flux, K_horiz=K_horiz)
+            state.theta, K_h, grid, sfc_hf, K_horiz=K_horiz)
         tend_theta = adv_theta + diff_theta
+
+        # Subsidence
+        tend_theta += compute_subsidence_tendency(state.theta, grid, phys)
+
+        # Sponge on theta: relax toward horizontal mean
+        theta_ref = np.mean(state.theta, axis=(0, 1), keepdims=True)
+        tend_theta += compute_sponge_tendency(state.theta, theta_ref, grid, phys)
 
         # --- u tendency ---
         adv_u = compute_advection_tendency_u_3d(state.u, state.v, state.w, grid)
-        diff_u = compute_diffusion_tendency_u_3d(state.u, K_m, grid, K_horiz=K_horiz)
-        # Coriolis: du/dt += f * (v_bar - v_geo)
-        # v at x-faces: average v[i-1,j] and v[i,j]
+
+        if tau_x_arr is not None:
+            diff_u = _diffusion_u_with_most_3d(state.u, K_m, grid, tau_x_arr, K_horiz)
+        else:
+            diff_u = compute_diffusion_tendency_u_3d(state.u, K_m, grid, K_horiz=K_horiz)
+
         v_at_xface = 0.5 * (state.v + np.roll(state.v, 1, axis=0))
         coriolis_u = phys.coriolis_f * (v_at_xface - phys.geostrophic_v)
         tend_u = adv_u + diff_u + coriolis_u
 
+        # Sponge on u
+        u_ref = np.mean(state.u, axis=(0, 1), keepdims=True)
+        tend_u += compute_sponge_tendency(state.u, u_ref, grid, phys)
+
         # --- v tendency ---
         adv_v = compute_advection_tendency_v_3d(state.u, state.v, state.w, grid)
-        diff_v = compute_diffusion_tendency_v_3d(state.v, K_m, grid, K_horiz=K_horiz)
-        # Coriolis: dv/dt += -f * (u_bar - u_geo)
-        # u at y-faces: average u[i,j-1] and u[i,j]
+
+        if tau_y_arr is not None:
+            diff_v = _diffusion_v_with_most_3d(state.v, K_m, grid, tau_y_arr, K_horiz)
+        else:
+            diff_v = compute_diffusion_tendency_v_3d(state.v, K_m, grid, K_horiz=K_horiz)
+
         u_at_yface = 0.5 * (state.u + np.roll(state.u, 1, axis=1))
         coriolis_v = -phys.coriolis_f * (u_at_yface - phys.geostrophic_u)
         tend_v = adv_v + diff_v + coriolis_v
 
+        # Sponge on v
+        v_ref = np.mean(state.v, axis=(0, 1), keepdims=True)
+        tend_v += compute_sponge_tendency(state.v, v_ref, grid, phys)
+
         # --- w tendency ---
         adv_w = compute_advection_tendency_w_3d(state.u, state.v, state.w, grid)
         diff_w = compute_diffusion_tendency_w_3d(state.w, K_m, grid, K_horiz=K_horiz)
-        # Buoyancy
-        theta_mean = np.mean(state.theta, axis=(0, 1), keepdims=True)  # (1, 1, nz)
+        theta_mean = np.mean(state.theta, axis=(0, 1), keepdims=True)
         buoyancy = np.zeros_like(state.w)
         theta_prime = state.theta - theta_mean
         buoyancy[:, :, 1:grid.nz] = phys.g / phys.reference_theta * 0.5 * (
             theta_prime[:, :, :grid.nz-1] + theta_prime[:, :, 1:grid.nz])
         tend_w = adv_w + diff_w + buoyancy
 
+        # Sponge on w
+        tend_w += compute_sponge_tendency_w(state.w, grid, phys)
+
         # Store heat flux diagnostic
-        dz = grid.dz
+        dz_f = grid.dz_face
         state.heat_flux[:, :, 1:grid.nz] = -K_h[:, :, 1:grid.nz] * (
-            state.theta[:, :, 1:grid.nz] - state.theta[:, :, :grid.nz-1]) / dz
-        state.heat_flux[:, :, 0] = phys.surface_heat_flux
+            state.theta[:, :, 1:grid.nz] - state.theta[:, :, :grid.nz-1]) / dz_f[1:grid.nz]
+        if sfc_heat_flux_arr is not None:
+            state.heat_flux[:, :, 0] = sfc_heat_flux_arr
+        else:
+            state.heat_flux[:, :, 0] = phys.surface_heat_flux
         state.heat_flux[:, :, -1] = 0.0
 
-        return {'theta': tend_theta, 'u': tend_u, 'v': tend_v, 'w': tend_w}
+        result = {'theta': tend_theta, 'u': tend_u, 'v': tend_v, 'w': tend_w}
+
+        # TKE tendency
+        if tke_tend is not None:
+            tke_tend += compute_sponge_tendency(state.tke, None, grid, phys)
+            result['tke'] = tke_tend
+
+        return result
 
     # ------------------------------------------------------------------
     # Stepping
@@ -238,13 +333,17 @@ class Solver:
                 self.state, self.grid, self.cfg.time.dt,
                 self.compute_tendencies_2d, self.poisson_solver
             )
-            # Enforce top theta BC
             apply_top_fixed_gradient_2d(
                 self.state.theta, self.grid, self.cfg.physics.lapse_rate)
         else:
             self.state = rk3_step(
                 self.state, self.grid, self.cfg.time.dt, self.compute_tendency
             )
+
+        # Clamp TKE to minimum
+        if self.state.tke is not None:
+            np.clip(self.state.tke, self.cfg.turbulence.tke_min, None,
+                    out=self.state.tke)
 
         self.time += self.cfg.time.dt
         self.step_count += 1
@@ -264,13 +363,12 @@ class Solver:
 
         # Progress log file for monitoring long simulations
         log_path = os.path.join(self.cfg.output.output_dir, "progress.log")
-        log_interval = max(1, n_steps // 200)  # ~200 log entries total
+        log_interval = max(1, n_steps // 200)
 
         def _log_progress(n, msg):
             with open(log_path, "a") as lf:
                 lf.write(f"step {n}/{n_steps}  {msg}\n")
 
-        # Clear old log
         with open(log_path, "w") as lf:
             lf.write(f"# miniPBL progress: {n_steps} steps, dt={dt}, dim={self.grid.dim}\n")
 
@@ -287,7 +385,6 @@ class Solver:
         for n in range(1, n_steps + 1):
             self.step()
 
-            # Write progress log periodically
             if n % log_interval == 0:
                 if self.grid.dim >= 2:
                     _log_progress(n, f"t={self.time:.1f}s  "
@@ -327,3 +424,80 @@ class Solver:
         _log_progress(n_steps, "COMPLETE")
         print(f"Simulation complete. Output in {self.cfg.output.output_dir}/")
         return writer.filepath
+
+
+# ---------------------------------------------------------------------------
+# Helpers: diffusion with MOST surface stress override
+# ---------------------------------------------------------------------------
+
+def _diffusion_u_with_most_2d(u, K_m, grid, tau_x, K_horiz):
+    """Vertical diffusion of u with MOST-derived surface stress for 2D.
+
+    tau_x: (nx,) — surface momentum flux from MOST (m^2/s^2).
+    """
+    from .diffusion import _horizontal_laplacian_center
+
+    nx, nz = grid.nx, grid.nz
+    dz_c = grid.dz_center
+    dz_f = grid.dz_face
+
+    tau = np.zeros((nx, nz + 1))
+    tau[:, 1:nz] = -K_m[:, 1:nz] * (u[:, 1:nz] - u[:, :nz-1]) / dz_f[1:nz]
+    # MOST surface stress replaces no-slip approximation
+    tau[:, 0] = tau_x  # tau_x = -u_star^2 * u/M (already signed)
+    tau[:, -1] = 0.0
+
+    tendency = -(tau[:, 1:] - tau[:, :-1]) / dz_c[np.newaxis, :]
+
+    if K_horiz > 0:
+        tendency += K_horiz * _horizontal_laplacian_center(u, grid.dx)
+
+    return tendency
+
+
+def _diffusion_u_with_most_3d(u, K_m, grid, tau_x, K_horiz):
+    """Vertical diffusion of u with MOST-derived surface stress for 3D.
+
+    tau_x: (nx, ny) — surface momentum flux from MOST.
+    """
+    from .diffusion import _horizontal_laplacian_center_3d
+
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dz_c = grid.dz_center
+    dz_f = grid.dz_face
+
+    tau = np.zeros((nx, ny, nz + 1))
+    tau[:, :, 1:nz] = -K_m[:, :, 1:nz] * (u[:, :, 1:nz] - u[:, :, :nz-1]) / dz_f[1:nz]
+    tau[:, :, 0] = tau_x
+    tau[:, :, -1] = 0.0
+
+    tendency = -(tau[:, :, 1:] - tau[:, :, :-1]) / dz_c[np.newaxis, np.newaxis, :]
+
+    if K_horiz > 0:
+        tendency += K_horiz * _horizontal_laplacian_center_3d(u, grid.dx, grid.dy)
+
+    return tendency
+
+
+def _diffusion_v_with_most_3d(v, K_m, grid, tau_y, K_horiz):
+    """Vertical diffusion of v with MOST-derived surface stress for 3D.
+
+    tau_y: (nx, ny) — surface momentum flux from MOST.
+    """
+    from .diffusion import _horizontal_laplacian_center_3d
+
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    dz_c = grid.dz_center
+    dz_f = grid.dz_face
+
+    tau = np.zeros((nx, ny, nz + 1))
+    tau[:, :, 1:nz] = -K_m[:, :, 1:nz] * (v[:, :, 1:nz] - v[:, :, :nz-1]) / dz_f[1:nz]
+    tau[:, :, 0] = tau_y
+    tau[:, :, -1] = 0.0
+
+    tendency = -(tau[:, :, 1:] - tau[:, :, :-1]) / dz_c[np.newaxis, np.newaxis, :]
+
+    if K_horiz > 0:
+        tendency += K_horiz * _horizontal_laplacian_center_3d(v, grid.dx, grid.dy)
+
+    return tendency

@@ -40,16 +40,17 @@ def rk3_step_2d(state, grid, dt, compute_tendencies, poisson_solver):
 
     Parameters
     ----------
-    state : State with theta(nx,nz), u(nx,nz), w(nx,nz+1)
+    state : State with theta(nx,nz), u(nx,nz), w(nx,nz+1), optionally tke(nx,nz)
     grid : Grid
     dt : timestep
     compute_tendencies : callable(State, Grid) -> dict
-        Returns {'theta': (nx,nz), 'u': (nx,nz), 'w': (nx,nz+1)}
+        Returns {'theta': ..., 'u': ..., 'w': ...} and optionally 'tke'
     poisson_solver : PoissonSolver instance
     """
     theta_n = state.theta.copy()
     u_n = state.u.copy()
     w_n = state.w.copy()
+    tke_n = state.tke.copy() if state.tke is not None else None
 
     for alpha in RK3_ALPHA:
         tend = compute_tendencies(state, grid)
@@ -59,6 +60,10 @@ def rk3_step_2d(state, grid, dt, compute_tendencies, poisson_solver):
         u_star = u_n + alpha * dt * tend['u']
         w_star = w_n + alpha * dt * tend['w']
 
+        # Advance TKE if present
+        if tke_n is not None and 'tke' in tend:
+            state.tke = tke_n + alpha * dt * tend['tke']
+
         # Apply rigid-lid BCs before projection
         apply_rigid_lid_w(w_star)
 
@@ -67,7 +72,7 @@ def rk3_step_2d(state, grid, dt, compute_tendencies, poisson_solver):
             u_star, w_star, grid, poisson_solver, alpha * dt
         )
 
-        # Enforce rigid lid again after projection (should already be satisfied)
+        # Enforce rigid lid again after projection
         apply_rigid_lid_w(state.w)
 
     return state
@@ -78,17 +83,18 @@ def rk3_step_3d(state, grid, dt, compute_tendencies, poisson_solver):
 
     Parameters
     ----------
-    state : State with theta(nx,ny,nz), u(nx,ny,nz), v(nx,ny,nz), w(nx,ny,nz+1)
+    state : State with theta(nx,ny,nz), u, v, w, optionally tke(nx,ny,nz)
     grid : Grid
     dt : timestep
     compute_tendencies : callable(State, Grid) -> dict
-        Returns {'theta': ..., 'u': ..., 'v': ..., 'w': ...}
+        Returns {'theta': ..., 'u': ..., 'v': ..., 'w': ...} and optionally 'tke'
     poisson_solver : PoissonSolver3D instance
     """
     theta_n = state.theta.copy()
     u_n = state.u.copy()
     v_n = state.v.copy()
     w_n = state.w.copy()
+    tke_n = state.tke.copy() if state.tke is not None else None
 
     for alpha in RK3_ALPHA:
         tend = compute_tendencies(state, grid)
@@ -97,6 +103,10 @@ def rk3_step_3d(state, grid, dt, compute_tendencies, poisson_solver):
         u_star = u_n + alpha * dt * tend['u']
         v_star = v_n + alpha * dt * tend['v']
         w_star = w_n + alpha * dt * tend['w']
+
+        # Advance TKE if present
+        if tke_n is not None and 'tke' in tend:
+            state.tke = tke_n + alpha * dt * tend['tke']
 
         apply_rigid_lid_w_3d(w_star)
 

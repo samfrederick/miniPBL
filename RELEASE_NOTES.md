@@ -1,3 +1,108 @@
+# miniPBL v4.0.0
+
+Addition of advanced physics parameterizations to miniPBL: vertical grid stretching, Deardorff prognostic TKE subgrid closure, Monin-Obukhov similarity theory surface layer, Rayleigh sponge damping, and large-scale subsidence. All operators updated to support variable vertical spacing. Existing 1D, 2D, and 3D modes are fully backward-compatible.
+
+## New Features
+
+### Vertical Grid Stretching
+- Optional geometric stretching of the vertical grid with configurable `stretch_factor` (ratio between successive cell thicknesses) and `nz_uniform` (number of uniform cells near the surface before stretching begins)
+- New grid arrays `dz_center[k]` (cell thickness) and `dz_face[k]` (distance between cell centers) replace the scalar `dz` throughout all operators
+- When `stretch_factor = 1.0` (default), the grid is identical to the previous uniform spacing
+
+### Variable-dz Support in All Operators
+- Diffusion: flux `F[k] = -K[k] * (f[k] - f[k-1]) / dz_face[k]`; tendency `(F[k+1] - F[k]) / dz_center[k]`
+- Advection: flux divergence uses local `dz_center[k]` and `dz_face[k]`
+- Pressure Poisson solver: tridiagonal coefficients `a[k] = 1/(dz_c[k]*dz_f[k])`, `c[k] = 1/(dz_c[k]*dz_f[k+1])` for variable spacing
+- Divergence and pressure gradient correction use position-dependent spacing
+- Boundary conditions (top gradient, surface stress) use local cell thickness
+
+### Deardorff TKE Subgrid-Scale Closure
+- Prognostic TKE equation: `de/dt = Shear + Buoyancy - Dissipation + Diffusion`
+- Shear production: `S = K_m * (|du/dz|^2 + |dv/dz|^2)`
+- Buoyancy production/destruction: `B = -(g/theta_ref) * K_h * dtheta/dz`
+- Dissipation: `eps = c_eps * e^(3/2) / l` with `c_eps = 0.19 + 0.51*l/Delta`
+- Stability-dependent mixing length: `l = min(c_l * sqrt(e) / N, Delta)` (Delta for unstable conditions)
+- Eddy viscosity: `K_m = c_m * l * sqrt(e)`; eddy diffusivity: `K_h = (1 + 2*l/Delta) * K_m`
+- TKE advanced by RK3 alongside theta, u, v, w; clamped to configurable minimum
+- Column-by-column computation for 2D and 3D fields
+- Activated by setting `scheme: "deardorff-tke"` in the turbulence config
+
+### Monin-Obukhov Similarity Theory (MOST) Surface Layer
+- Iterative solver for friction velocity (u_star) and temperature scale (theta_star) given wind speed and temperature at the first grid level
+- Businger-Dyer stability functions for momentum (psi_m) and heat (psi_h) under both stable and unstable conditions
+- Surface heat flux: `w'theta'_sfc = -u_star * theta_star`
+- Surface momentum flux: `tau = -u_star^2 * (u,v) / |V|`
+- Replaces both the prescribed surface heat flux and the no-slip surface stress approximation when activated
+- Activated by setting `surface_flux_scheme: "most"` in the physics config
+
+### Rayleigh Sponge Damping Layer
+- Rayleigh damping in the upper domain: `d(phi)/dt += -alpha(z) * (phi - phi_ref)`
+- Damping profile: `alpha(z) = alpha_max * sin^2(pi/2 * (z - z_sponge) / (Lz - z_sponge))`
+- Applied to theta (relaxed toward horizontal mean), u and v (horizontal mean), w and TKE (zero)
+- Configurable `sponge_fraction` (default 0.25) and `sponge_alpha_max` (default 0, i.e. off)
+
+### Large-Scale Subsidence
+- Prescribed subsidence profile: `w_s(z) = -D * z` where D is the divergence rate
+- Theta tendency: `d(theta)/dt += -w_s * d(theta)/dz`
+- Prevents unbounded boundary layer growth in long simulations
+- Activated by setting `subsidence_divergence > 0` in the physics config
+
+## Configuration Changes
+
+### GridConfig
+- `stretch_factor: float = 1.0` — geometric stretch ratio (1.0 = uniform)
+- `nz_uniform: int = 0` — uniform cells near surface before stretching
+
+### PhysicsConfig
+- `surface_flux_scheme: str = "prescribed"` — `"prescribed"` or `"most"`
+- `theta_surface: float = 302.0` — surface temperature for MOST (K)
+- `subsidence_divergence: float = 0.0` — large-scale divergence rate (1/s)
+- `sponge_fraction: float = 0.25` — fraction of domain for sponge layer
+- `sponge_alpha_max: float = 0.01` — maximum Rayleigh damping rate (1/s)
+
+### TurbulenceConfig
+- `scheme` now supports `"k-profile"` (existing) and `"deardorff-tke"` (new)
+- `tke_c_m: float = 0.1` — eddy viscosity coefficient
+- `tke_c_eps_base: float = 0.19` — base dissipation coefficient
+- `tke_c_l: float = 0.76` — mixing length coefficient
+- `tke_min: float = 1e-4` — minimum TKE floor (m^2/s^2)
+
+## Backward Compatibility
+
+All new features default to off. Existing configurations produce identical results:
+- `stretch_factor = 1.0`: uniform grid (identical to v3.0.0)
+- `scheme = "k-profile"`: diagnostic K-profile closure (unchanged)
+- `surface_flux_scheme = "prescribed"`: fixed surface heat flux (unchanged)
+- `sponge_alpha_max = 0.0`: no sponge damping
+- `subsidence_divergence = 0.0`: no subsidence
+
+## Files Added
+- `minipbl/tke_closure.py` — Deardorff prognostic TKE closure
+- `minipbl/surface_layer.py` — Monin-Obukhov similarity theory surface fluxes
+- `minipbl/forcing.py` — Rayleigh sponge damping and large-scale subsidence
+
+## Files Modified
+- `minipbl/config.py` — New parameters in GridConfig, PhysicsConfig, TurbulenceConfig
+- `minipbl/grid.py` — Vertical stretching, `dz_center`/`dz_face` arrays
+- `minipbl/state.py` — TKE field and `initialize_tke()` method
+- `minipbl/diffusion.py` — All operators use variable `dz_center`/`dz_face`
+- `minipbl/advection.py` — All operators use variable `dz_center`/`dz_face`
+- `minipbl/pressure.py` — Variable-dz tridiagonal coefficients and projection
+- `minipbl/boundary.py` — Top gradient BCs use `dz_center[-1]`
+- `minipbl/turbulence.py` — BL height interpolation uses `dz_face[k]`
+- `minipbl/solver.py` — Wired TKE closure, MOST, sponge, subsidence into tendency computation
+- `minipbl/timestepper.py` — RK3 advances TKE alongside other prognostic variables
+- `config/cbl_2d.yaml` — New physics parameters with comments
+- `config/cbl_3d.yaml` — New physics parameters with comments
+
+## Dependencies
+- numpy
+- scipy
+- matplotlib
+- pyyaml
+
+---
+
 # miniPBL v3.0.0
 
 Extension of miniPBL from 2D x-z to full 3D x-y-z Boussinesq solver with a prognostic v velocity, Coriolis coupling on both u and v, and 3D pressure projection. The 1D and 2D modes are fully backward-compatible.

@@ -16,6 +16,8 @@ class GridConfig:
     Lx: float = 6000.0
     ny: int = 1
     Ly: float = 6000.0
+    stretch_factor: float = 1.0  # 1.0 = uniform; >1.0 = geometric stretch ratio
+    nz_uniform: int = 0  # uniform-dz cells near surface before stretching begins
 
 
 @dataclass
@@ -31,16 +33,26 @@ class PhysicsConfig:
     geostrophic_u: float = 10.0
     geostrophic_v: float = 0.0
     z0: float = 0.1  # m, surface roughness length
+    surface_flux_scheme: str = "prescribed"  # "prescribed" or "most"
+    theta_surface: float = 302.0  # K, surface temperature for MOST
+    subsidence_divergence: float = 0.0  # 1/s, large-scale divergence (0 = off)
+    sponge_fraction: float = 0.25  # fraction of domain for sponge layer
+    sponge_alpha_max: float = 0.01  # 1/s, max damping rate
 
 
 @dataclass
 class TurbulenceConfig:
-    scheme: str = "k-profile"
+    scheme: str = "k-profile"  # "k-profile" or "deardorff-tke"
     k_profile_kappa: float = 0.4
     theta_excess_threshold: float = 0.5  # K
     background_K: float = 0.1  # m^2/s
     K_m_ratio: float = 1.0
     K_horizontal: float = 10.0  # m^2/s, horizontal diffusivity for 2D
+    # Deardorff TKE closure parameters
+    tke_c_m: float = 0.1
+    tke_c_eps_base: float = 0.19
+    tke_c_l: float = 0.76
+    tke_min: float = 1e-4  # m^2/s^2, minimum TKE
 
 
 @dataclass

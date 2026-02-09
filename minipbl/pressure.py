@@ -2,6 +2,8 @@
 
 FFT in x (periodic) + tridiagonal solve in z per wavenumber.
 Neumann BCs in z (dphi/dz = 0 at rigid boundaries).
+
+Supports variable vertical spacing via grid.dz_center and grid.dz_face arrays.
 """
 
 import numpy as np
@@ -13,15 +15,15 @@ class PoissonSolver:
 
     def __init__(self, grid):
         nx, nz = grid.nx, grid.nz
-        dx, dz = grid.dx, grid.dz
+        dx = grid.dx
 
         self.nx = nx
         self.nz = nz
         self.dx = dx
-        self.dz = dz
+        self.dz_center = grid.dz_center  # (nz,)
+        self.dz_face = grid.dz_face      # (nz+1,)
 
         # Eigenvalues of the discrete second-derivative in x (periodic, FFT)
-        # lambda_k = (2/dx^2) * (cos(2*pi*k/nx) - 1)
         k = np.arange(nx)
         self.lambda_x = 2.0 / (dx * dx) * (np.cos(2.0 * np.pi * k / nx) - 1.0)
 
@@ -32,64 +34,53 @@ class PoissonSolver:
         Returns phi: (nx, nz).
         """
         nx, nz = self.nx, self.nz
-        dz = self.dz
+        dz_c = self.dz_center
+        dz_f = self.dz_face
 
         # Forward FFT in x
-        rhs_hat = np.fft.fft(rhs, axis=0)  # (nx, nz) complex
+        rhs_hat = np.fft.fft(rhs, axis=0)
 
         phi_hat = np.zeros_like(rhs_hat)
-
-        # For each wavenumber, solve tridiagonal system in z
-        # d^2 phi / dz^2 + lambda_x * phi = rhs_hat
-        # With Neumann BCs: dphi/dz = 0 at z=0 and z=Lz
-        #
-        # Interior: (phi[k-1] - 2*phi[k] + phi[k+1])/dz^2 + lam*phi[k] = rhs[k]
-        # k=0 (Neumann bottom): (phi[1] - phi[0])/dz^2 + lam*phi[0] = rhs[0]
-        #   equivalent to: (-1/dz^2 + lam)*phi[0] + (1/dz^2)*phi[1] = rhs[0]
-        # k=nz-1 (Neumann top): (phi[nz-2] - phi[nz-1])/dz^2 + lam*phi[nz-1] = rhs[nz-1]
-
-        dz2_inv = 1.0 / (dz * dz)
 
         for m in range(nx):
             lam = self.lambda_x[m]
 
-            # Build tridiagonal: a (sub), b (main), c (super)
-            a = np.zeros(nz)  # sub-diagonal (index 0 unused)
-            b = np.zeros(nz)  # main diagonal
-            c = np.zeros(nz)  # super-diagonal (index nz-1 unused)
-            r = rhs_hat[m, :]  # right-hand side
+            a = np.zeros(nz)
+            b = np.zeros(nz)
+            c = np.zeros(nz)
+            r = rhs_hat[m, :]
 
-            # Interior rows
+            # Interior rows: variable-dz tridiagonal coefficients
+            # d/dz(dphi/dz) at center k:
+            #   (1/dz_c[k]) * [ (phi[k+1]-phi[k])/dz_f[k+1] - (phi[k]-phi[k-1])/dz_f[k] ]
             for k in range(1, nz - 1):
-                a[k] = dz2_inv
-                b[k] = -2.0 * dz2_inv + lam
-                c[k] = dz2_inv
+                a[k] = 1.0 / (dz_c[k] * dz_f[k])
+                c[k] = 1.0 / (dz_c[k] * dz_f[k + 1])
+                b[k] = -(a[k] + c[k]) + lam
 
-            # Bottom Neumann: ghost phi[-1] = phi[0] => phi[-1]-2*phi[0]+phi[1] = phi[0]-2*phi[0]+phi[1]
-            b[0] = -dz2_inv + lam
-            c[0] = dz2_inv
+            # Bottom Neumann: ghost phi[-1] = phi[0]
+            # d2phi/dz2 ~ (phi[1]-phi[0])/(dz_c[0]*dz_f[1])
+            c[0] = 1.0 / (dz_c[0] * dz_f[1])
+            b[0] = -c[0] + lam
 
             # Top Neumann: ghost phi[nz] = phi[nz-1]
-            a[nz - 1] = dz2_inv
-            b[nz - 1] = -dz2_inv + lam
+            a[nz - 1] = 1.0 / (dz_c[nz - 1] * dz_f[nz - 1])
+            b[nz - 1] = -a[nz - 1] + lam
 
-            # Handle kx=0 mode: singular system (constant null space)
-            # Pin phi[0] = 0 to remove the singularity
+            # Handle kx=0 mode: singular system — pin phi[0] = 0
             if m == 0:
                 b[0] = 1.0
                 c[0] = 0.0
                 r = r.copy()
                 r[0] = 0.0
 
-            # Pack into banded form for solve_banded: ab[0]=super, ab[1]=main, ab[2]=sub
             ab = np.zeros((3, nz), dtype=complex)
-            ab[0, 1:] = c[:nz - 1]   # super-diagonal
-            ab[1, :] = b             # main diagonal
-            ab[2, :nz - 1] = a[1:]   # sub-diagonal
+            ab[0, 1:] = c[:nz - 1]
+            ab[1, :] = b
+            ab[2, :nz - 1] = a[1:]
 
             phi_hat[m, :] = solve_banded((1, 1), ab, r)
 
-        # Inverse FFT in x
         phi = np.fft.ifft(phi_hat, axis=0).real
 
         return phi
@@ -100,21 +91,21 @@ class PoissonSolver3D:
 
     def __init__(self, grid):
         nx, ny, nz = grid.nx, grid.ny, grid.nz
-        dx, dy, dz = grid.dx, grid.dy, grid.dz
+        dx, dy = grid.dx, grid.dy
 
         self.nx = nx
         self.ny = ny
         self.nz = nz
         self.dx = dx
         self.dy = dy
-        self.dz = dz
+        self.dz_center = grid.dz_center
+        self.dz_face = grid.dz_face
 
         # Eigenvalues of discrete second-derivative in x and y
         kx = np.arange(nx)
         ky = np.arange(ny)
         lambda_x = 2.0 / (dx * dx) * (np.cos(2.0 * np.pi * kx / nx) - 1.0)
         lambda_y = 2.0 / (dy * dy) * (np.cos(2.0 * np.pi * ky / ny) - 1.0)
-        # Combined eigenvalue for each (kx, ky) pair: (nx, ny)
         self.lambda_xy = lambda_x[:, np.newaxis] + lambda_y[np.newaxis, :]
 
     def solve(self, rhs):
@@ -124,14 +115,12 @@ class PoissonSolver3D:
         Returns phi: (nx, ny, nz).
         """
         nx, ny, nz = self.nx, self.ny, self.nz
-        dz = self.dz
+        dz_c = self.dz_center
+        dz_f = self.dz_face
 
-        # Forward 2D FFT in x and y
-        rhs_hat = np.fft.fft2(rhs, axes=(0, 1))  # (nx, ny, nz) complex
+        rhs_hat = np.fft.fft2(rhs, axes=(0, 1))
 
         phi_hat = np.zeros_like(rhs_hat)
-
-        dz2_inv = 1.0 / (dz * dz)
 
         for m in range(nx):
             for n in range(ny):
@@ -144,17 +133,17 @@ class PoissonSolver3D:
 
                 # Interior rows
                 for k in range(1, nz - 1):
-                    a[k] = dz2_inv
-                    b[k] = -2.0 * dz2_inv + lam
-                    c[k] = dz2_inv
+                    a[k] = 1.0 / (dz_c[k] * dz_f[k])
+                    c[k] = 1.0 / (dz_c[k] * dz_f[k + 1])
+                    b[k] = -(a[k] + c[k]) + lam
 
                 # Bottom Neumann
-                b[0] = -dz2_inv + lam
-                c[0] = dz2_inv
+                c[0] = 1.0 / (dz_c[0] * dz_f[1])
+                b[0] = -c[0] + lam
 
                 # Top Neumann
-                a[nz - 1] = dz2_inv
-                b[nz - 1] = -dz2_inv + lam
+                a[nz - 1] = 1.0 / (dz_c[nz - 1] * dz_f[nz - 1])
+                b[nz - 1] = -a[nz - 1] + lam
 
                 # Handle kx=0, ky=0 mode: pin phi[0]=0
                 if m == 0 and n == 0:
@@ -170,7 +159,6 @@ class PoissonSolver3D:
 
                 phi_hat[m, n, :] = solve_banded((1, 1), ab, r)
 
-        # Inverse 2D FFT
         phi = np.fft.ifft2(phi_hat, axes=(0, 1)).real
 
         return phi
@@ -182,12 +170,14 @@ def project_velocity_3d(u_star, v_star, w_star, grid, poisson_solver, dt):
     Returns (u, v, w, p).
     """
     nx, ny, nz = grid.nx, grid.ny, grid.nz
-    dx, dy, dz = grid.dx, grid.dy, grid.dz
+    dx, dy = grid.dx, grid.dy
+    dz_c = grid.dz_center
+    dz_f = grid.dz_face
 
     # 3D divergence at cell centers
     div = ((np.roll(u_star, -1, axis=0) - u_star) / dx
            + (np.roll(v_star, -1, axis=1) - v_star) / dy
-           + (w_star[:, :, 1:] - w_star[:, :, :-1]) / dz)
+           + (w_star[:, :, 1:] - w_star[:, :, :-1]) / dz_c[np.newaxis, np.newaxis, :])
 
     phi = poisson_solver.solve(div / dt)
 
@@ -199,7 +189,7 @@ def project_velocity_3d(u_star, v_star, w_star, grid, poisson_solver, dt):
     v = v_star - dt * dphi_dy
 
     dphi_dz = np.zeros((nx, ny, nz + 1))
-    dphi_dz[:, :, 1:nz] = (phi[:, :, 1:nz] - phi[:, :, :nz-1]) / dz
+    dphi_dz[:, :, 1:nz] = (phi[:, :, 1:nz] - phi[:, :, :nz-1]) / dz_f[1:nz]
     w = w_star - dt * dphi_dz
 
     return u, v, w, phi * dt
@@ -213,25 +203,22 @@ def project_velocity(u_star, w_star, grid, poisson_solver, dt):
     Returns (u, w, p).
     """
     nx, nz = grid.nx, grid.nz
-    dx, dz = grid.dx, grid.dz
+    dx = grid.dx
+    dz_c = grid.dz_center
+    dz_f = grid.dz_face
 
     # Compute divergence of (u_star, w_star) at cell centers
-    # du/dx: u at right face minus u at left face
     div = (np.roll(u_star, -1, axis=0) - u_star) / dx \
-        + (w_star[:, 1:] - w_star[:, :-1]) / dz
+        + (w_star[:, 1:] - w_star[:, :-1]) / dz_c[np.newaxis, :]
 
-    # Solve Poisson equation: nabla^2 phi = div / dt
     phi = poisson_solver.solve(div / dt)
 
-    # Correct velocities: u = u_star - dt * dphi/dx, w = w_star - dt * dphi/dz
-    # dphi/dx at x-faces (between cell centers i-1 and i, periodic)
-    dphi_dx = (phi - np.roll(phi, 1, axis=0)) / dx  # (nx, nz)
+    # Correct velocities
+    dphi_dx = (phi - np.roll(phi, 1, axis=0)) / dx
     u = u_star - dt * dphi_dx
 
-    # dphi/dz at z-faces (between cell centers k-1 and k)
     dphi_dz = np.zeros((nx, nz + 1))
-    dphi_dz[:, 1:nz] = (phi[:, 1:nz] - phi[:, :nz-1]) / dz
-    # dphi/dz = 0 at boundaries (Neumann)
+    dphi_dz[:, 1:nz] = (phi[:, 1:nz] - phi[:, :nz-1]) / dz_f[1:nz]
     w = w_star - dt * dphi_dz
 
-    return u, w, phi * dt  # return pressure = dt * phi for diagnostics
+    return u, w, phi * dt

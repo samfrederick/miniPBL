@@ -34,6 +34,7 @@ class State:
             self.K_h = np.zeros((nx, ny, nz + 1))
             self.K_m = np.zeros((nx, ny, nz + 1))
             self.bl_height = np.zeros((nx, ny))
+            self.tke = None  # initialized if deardorff-tke scheme is used
         elif grid.dim >= 2:
             self.theta = np.zeros((nx, nz))
             self.u = np.zeros((nx, nz))
@@ -44,6 +45,7 @@ class State:
             self.K_h = np.zeros((nx, nz + 1))
             self.K_m = np.zeros((nx, nz + 1))
             self.bl_height = np.zeros(nx)
+            self.tke = None
         else:
             self.theta = np.zeros(nz)
             self.heat_flux = np.zeros(nz + 1)
@@ -54,6 +56,7 @@ class State:
             self.w = None
             self.p = None
             self.K_m = None
+            self.tke = None
 
     def copy(self) -> "State":
         """Deep copy for RK3 sub-stages."""
@@ -123,3 +126,14 @@ class State:
         if self.v is None:
             return
         self.v[:] = v_geo
+
+    def initialize_tke(self, tke_min: float = 1e-4):
+        """Initialize TKE to a small uniform value."""
+        grid = self.grid
+        nx, ny, nz = grid.nx, grid.ny, grid.nz
+        if grid.dim >= 3:
+            self.tke = np.full((nx, ny, nz), tke_min)
+        elif grid.dim >= 2:
+            self.tke = np.full((nx, nz), tke_min)
+        else:
+            self.tke = np.full(nz, tke_min)

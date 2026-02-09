@@ -3,34 +3,46 @@ grid:
   Lz: 3000.0
   nx: 128
   Lx: 6000.0
+  stretch_factor: 1.03             # 1.0 = uniform; >1.0 = geometric stretch ratio
+  nz_uniform: 20                   # uniform-dz cells near surface before stretching begins
 
 physics:
-  surface_heat_flux: 0.24       # K m/s (~300 W/m^2)
-  theta_initial: 300.0           # K
-  reference_theta: 300.0         # K
-  mixed_layer_height: 1000.0     # m
-  lapse_rate: 0.003              # K/m above mixed layer
+  surface_heat_flux: 0.24          # K m/s (~300 W/m^2)
+  theta_initial: 300.0             # K
+  reference_theta: 300.0           # K
+  mixed_layer_height: 1000.0       # m
+  lapse_rate: 0.003                # K/m above mixed layer
   g: 9.81
   coriolis_f: 1.0e-4
   geostrophic_u: 10.0
   geostrophic_v: 0.0
-  z0: 0.1                         # m, surface roughness length
+  z0: 0.1                          # m, surface roughness length
+  surface_flux_scheme: "most"       # "prescribed" = fixed surface_heat_flux; "most" = Monin-Obukhov similarity
+  theta_surface: 302.0             # K, surface temperature (used only when surface_flux_scheme = "most")
+  subsidence_divergence: 5.0e-6    # 1/s, large-scale divergence rate (0 = off); w_s(z) = -D*z
+  sponge_fraction: 0.25            # fraction of domain height for Rayleigh damping layer
+  sponge_alpha_max: 0.01           # 1/s, max damping rate (0 = sponge off)
 
 turbulence:
-  scheme: "k-profile"
+  scheme: "deardorff-tke"           # "k-profile" = diagnostic K-profile closure; "deardorff-tke" = prognostic TKE
   k_profile_kappa: 0.4
-  theta_excess_threshold: 0.5   # K
-  background_K: 0.1             # m^2/s
+  theta_excess_threshold: 0.5     # K
+  background_K: 0.1               # m^2/s
   K_m_ratio: 1.0
-  K_horizontal: 10.0             # m^2/s, horizontal diffusivity
+  K_horizontal: 10.0              # m^2/s, horizontal diffusivity
+  # Deardorff TKE parameters (used only when scheme = "deardorff-tke")
+  tke_c_m: 0.1                    # eddy viscosity coefficient
+  tke_c_eps_base: 0.19            # base dissipation coefficient (c_eps = c_eps_base + 0.51*l/Delta)
+  tke_c_l: 0.76                   # mixing length coefficient
+  tke_min: 1.0e-4                 # m^2/s^2, minimum TKE floor
 
 time:
   dt: 0.5
-  t_end: 7200.0                 # 2 hours
-  output_interval: 300.0        # 5 minutes
+  t_end: 7200.0                   # 2 hours
+  output_interval: 300.0          # 5 minutes
 
 output:
-  output_dir: "output"
+  output_dir: "output_2d"
   fields_to_save:
     - theta
     - u
