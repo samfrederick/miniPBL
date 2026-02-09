@@ -53,7 +53,13 @@ class Solver:
 
         # Initialize TKE if using deardorff-tke scheme
         if cfg.turbulence.scheme == "deardorff-tke":
-            self.state.initialize_tke(cfg.turbulence.tke_min)
+            self.state.initialize_tke(
+                tke_min=cfg.turbulence.tke_min,
+                surface_heat_flux=cfg.physics.surface_heat_flux,
+                mixed_layer_height=cfg.physics.mixed_layer_height,
+                g=cfg.physics.g,
+                reference_theta=cfg.physics.reference_theta,
+            )
 
         # 3D initialization
         if self.grid.dim >= 3:

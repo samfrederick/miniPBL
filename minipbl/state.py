@@ -127,13 +127,39 @@ class State:
             return
         self.v[:] = v_geo
 
-    def initialize_tke(self, tke_min: float = 1e-4):
-        """Initialize TKE to a small uniform value."""
+    def initialize_tke(self, tke_min: float = 1e-4,
+                       surface_heat_flux: float = 0.0,
+                       mixed_layer_height: float = 0.0,
+                       g: float = 9.81,
+                       reference_theta: float = 300.0):
+        """Initialize TKE with a convective scaling profile.
+
+        In the mixed layer, TKE is set to w*^2 * (1 - z/z_i) where
+        w* = (g/theta_ref * Q_sfc * z_i)^(1/3) is the convective velocity
+        scale.  Above the mixed layer, TKE is set to the floor value.
+        If surface_heat_flux <= 0 or mixed_layer_height <= 0, falls back
+        to a uniform floor value.
+        """
         grid = self.grid
         nx, ny, nz = grid.nx, grid.ny, grid.nz
-        if grid.dim >= 3:
-            self.tke = np.full((nx, ny, nz), tke_min)
-        elif grid.dim >= 2:
-            self.tke = np.full((nx, nz), tke_min)
+
+        # Compute convective velocity scale
+        if surface_heat_flux > 0 and mixed_layer_height > 0:
+            w_star = (g / reference_theta * surface_heat_flux
+                      * mixed_layer_height) ** (1.0 / 3.0)
+            tke_profile = np.array([
+                max(w_star ** 2 * max(1.0 - grid.z_center[k] / mixed_layer_height, 0.0),
+                    tke_min)
+                for k in range(nz)
+            ])
         else:
-            self.tke = np.full(nz, tke_min)
+            tke_profile = np.full(nz, tke_min)
+
+        if grid.dim >= 3:
+            self.tke = np.broadcast_to(
+                tke_profile[np.newaxis, np.newaxis, :], (nx, ny, nz)).copy()
+        elif grid.dim >= 2:
+            self.tke = np.broadcast_to(
+                tke_profile[np.newaxis, :], (nx, nz)).copy()
+        else:
+            self.tke = tke_profile.copy()
