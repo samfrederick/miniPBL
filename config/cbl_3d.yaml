@@ -41,7 +41,7 @@ turbulence:
 
 time:
   dt: 0.5
-  t_end: 3600.0                   # 1 hour
+  t_end: 7200.0                   # 2 hour
   output_interval: 300.0          # 5 minutes
 
 output:

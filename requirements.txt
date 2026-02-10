@@ -1,4 +1,5 @@
 numpy
+numba
 pyyaml
 scipy
 matplotlib
