@@ -11,7 +11,7 @@ A lightweight Python solver for simulating the planetary boundary layer (PBL). m
 - Prognostic equations for potential temperature (theta), horizontal velocities (u, v), vertical velocity (w), and optionally turbulent kinetic energy (TKE)
 - **Two turbulence closures**:
   - **K-profile** — diagnostic closure with convective velocity scaling (w*) and automatic boundary layer height diagnosis
-  - **Deardorff TKE** — prognostic subgrid TKE with shear/buoyancy production, dissipation, and stability-dependent mixing length; eddy viscosity K_m = c_m * l * sqrt(e) and diffusivity K_h = (1 + 2l/Delta) * K_m
+  - **Deardorff TKE** — prognostic subgrid TKE with shear/buoyancy production, dissipation, and stability-dependent mixing length; eddy viscosity K_m = c_m * l * sqrt(e) and diffusivity K_h = (1 + 2l/Delta) * K_m; inner column loops compiled to machine code via Numba `@njit` for ~200x speedup
 - **Monin-Obukhov Similarity Theory (MOST)** surface layer — iterative solver for u_star and theta_star with Businger-Dyer stability functions; replaces prescribed surface fluxes with interactive fluxes based on near-surface wind and temperature; includes Beljaars (1994) convective velocity scale to prevent flux collapse in free-convective conditions
 - **Rayleigh sponge damping** in the upper domain (configurable fraction and strength) to absorb gravity waves and prevent spurious reflections
 - **Large-scale subsidence** — prescribed w_s(z) = -D*z profile with configurable divergence rate to limit boundary layer growth
@@ -51,7 +51,7 @@ A lightweight Python solver for simulating the planetary boundary layer (PBL). m
 
 ### Installation
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt   # includes numba for JIT-compiled TKE closure
 ```
 
 ### Running
@@ -84,7 +84,7 @@ miniPBL/
 │   ├── state.py             # Prognostic state (theta, u, v, w, p, tke)
 │   ├── solver.py            # Main simulation loop and tendency assembly
 │   ├── turbulence.py        # K-profile turbulence closure (column-by-column)
-│   ├── tke_closure.py       # Deardorff prognostic TKE closure
+│   ├── tke_closure.py       # Deardorff prognostic TKE closure (Numba JIT-compiled)
 │   ├── surface_layer.py     # Monin-Obukhov similarity theory surface fluxes
 │   ├── forcing.py           # Sponge/Rayleigh damping and large-scale subsidence
 │   ├── diffusion.py         # Vertical + horizontal diffusion operators

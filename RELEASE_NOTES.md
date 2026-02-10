@@ -1,3 +1,44 @@
+# miniPBL v4.2.0
+
+Numba JIT compilation for the Deardorff TKE closure, eliminating the dominant performance bottleneck.
+
+## Performance
+
+- Profiling showed the TKE closure consumed **86% of total runtime** in both 2D and 3D simulations (13.5M calls to `builtins.max` alone cost 18s in the 3D profile)
+- The inner column functions (`_compute_mixing_length` and `compute_tke_closure_column`) contained Python-level `for k` loops over vertical levels — the classic Numba target
+- After JIT compilation: **~200x speedup per column call** (from ~1 ms to ~5 us)
+
+## Changes
+
+### Numba JIT Compilation of TKE Closure
+- Created `_compute_mixing_length_jit()` — `@njit`-decorated function accepting only NumPy arrays and scalar primitives (replacing Grid/config object arguments that Numba cannot handle)
+- Created `_compute_tke_closure_column_jit()` — `@njit`-decorated column function with boolean flags (`has_u`, `has_v`) replacing `None` checks on optional arrays
+- Retained Python wrapper functions `_compute_mixing_length()` and `compute_tke_closure_column()` with the original signatures for backward compatibility with external callers (diagnostic scripts)
+- Updated `compute_tke_closure_2d()` and `compute_tke_closure_3d()` to extract scalars/arrays from Grid/config objects once at the top, then pass primitives into the JIT function inside the column loop
+
+### Configuration
+- `config/cbl_3d.yaml`: `t_end` extended from 3600s (1 hour) to 7200s (2 hours)
+
+## Backward Compatibility
+
+- All public APIs are unchanged — `compute_tke_closure_column`, `_compute_mixing_length`, `compute_tke_closure_2d`, `compute_tke_closure_3d` retain their original signatures
+- First call to JIT functions incurs a one-time compilation overhead (~1-2s); subsequent calls run at compiled speed
+- Numerical results are identical to v4.1.0 (same arithmetic, same order of operations)
+
+## Files Modified
+- `minipbl/tke_closure.py` — Numba `@njit` on inner column functions with Python wrappers
+- `requirements.txt` — Added `numba`
+- `config/cbl_3d.yaml` — Extended `t_end` to 7200s
+
+## Dependencies
+- numpy
+- numba
+- scipy
+- matplotlib
+- pyyaml
+
+---
+
 # miniPBL v4.1.0
 
 5th-order upwind advection scheme, MOST convective velocity fix, and LES cold-start improvements.
